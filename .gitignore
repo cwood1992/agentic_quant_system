@@ -1,0 +1,46 @@
+# Secrets
+.env
+*.env
+
+# Database files (runtime generated)
+data/system.db
+data/quant.db
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Agent data (generated at runtime)
+data/cache/
+data/digest_log/
+data/response_log/
+data/trades/
+data/analysis/
+
+# Memory files (binary, agent-specific)
+memory/*.mv2
+memory/data/
+
+# Logs
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Dashboard output (generated)
+dashboard/output/
+
+# STATE.md is generated at runtime
+STATE.md
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json

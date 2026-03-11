@@ -1,0 +1,158 @@
+# config.yaml.template — copy to config.yaml and fill in secrets from .env
+# All ${VAR} references are resolved from environment variables at startup.
+
+# === Exchange ===
+exchange:
+  name: kraken
+  api_key: ${KRAKEN_API_KEY}
+  api_secret: ${KRAKEN_API_SECRET}
+  sandbox: false                       # no sandbox — paper trading uses live prices
+  rate_limit_ms: 1000
+
+# === Claude API ===
+claude:
+  api_key: ${ANTHROPIC_API_KEY}
+  default_model: claude-sonnet-4-6
+  escalation_model: claude-opus-4-6
+  max_output_tokens: 8000
+  max_tool_iterations: 5
+  max_monthly_api_budget_usd: 50
+
+# === Telegram ===
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+  chat_id: ${TELEGRAM_CHAT_ID}
+  enabled: false
+
+# === Agents ===
+agents:
+  quant_primary:
+    role: quant
+    brief: briefs/BRIEF_QUANT.md
+    memory: memory/quant_primary.mv2
+    default_model: claude-sonnet-4-6
+    escalation_model: claude-opus-4-6
+    base_cadence_hours: 6
+    capital_allocation_pct: 1.0
+    strategy_namespace: "primary"
+    tools:
+      - run_analysis
+      - query_memory
+      - check_backtest_status
+    max_positions: 5
+    enabled: true
+
+  # Uncomment and configure when ready:
+  # quant_micro:
+  #   role: quant
+  #   brief: briefs/BRIEF_QUANT_MICRO.md
+  #   memory: memory/quant_micro.mv2
+  #   default_model: claude-sonnet-4-6
+  #   escalation_model: claude-opus-4-6
+  #   base_cadence_hours: 4
+  #   capital_allocation_pct: 0.50
+  #   strategy_namespace: "micro"
+  #   tools:
+  #     - run_analysis
+  #     - query_memory
+  #     - check_backtest_status
+  #   max_positions: 5
+  #   enabled: false
+
+  # quant_barbell:
+  #   role: quant
+  #   brief: briefs/BRIEF_QUANT_BARBELL.md
+  #   memory: memory/quant_barbell.mv2
+  #   default_model: claude-sonnet-4-6
+  #   escalation_model: claude-opus-4-6
+  #   base_cadence_hours: 8
+  #   capital_allocation_pct: 0.50
+  #   strategy_namespace: "barbell"
+  #   tools:
+  #     - run_analysis
+  #     - query_memory
+  #     - check_backtest_status
+  #   max_positions: 5
+  #   enabled: false
+
+  # portfolio_manager:
+  #   role: portfolio_manager
+  #   brief: briefs/BRIEF_PM.md
+  #   memory: memory/portfolio_manager.mv2
+  #   default_model: claude-sonnet-4-6
+  #   escalation_model: claude-opus-4-6
+  #   base_cadence_hours: 24
+  #   tools:
+  #     - run_analysis
+  #     - query_memory
+  #     - list_agent_messages
+  #   enabled: false
+
+  # risk_monitor:
+  #   role: risk_monitor
+  #   brief: briefs/BRIEF_RISK.md
+  #   memory: memory/risk_monitor.mv2
+  #   default_model: claude-sonnet-4-6
+  #   escalation_model: claude-opus-4-6
+  #   base_cadence_hours: 0.5
+  #   tools:
+  #     - run_analysis
+  #     - query_memory
+  #   enabled: false
+
+# === Data Collection ===
+data:
+  monitored_pairs:
+    - BTC/USD
+    - ETH/USD
+    - SOL/USD
+    - AVAX/USD
+    - LINK/USD
+  timeframes:
+    - 1m
+    - 1h
+    - 4h
+    - 1d
+  orderbook_depth: 10
+  collection_interval_seconds: 60
+  backfill_days: 180
+
+# === Risk Limits ===
+risk:
+  circuit_breaker_drawdown_pct: 0.30
+  position_loss_trigger_pct: 0.25
+  global_max_gross_exposure: 0.80
+  global_max_pair_exposure: 0.50
+  global_max_concurrent_positions: 10
+  default_max_positions_per_agent: 5
+  minimum_order_usd: 5.0
+
+# === Wake Controller ===
+wake_controller:
+  min_cadence_hours: 1
+  max_cadence_hours: 24
+  cooldown_minutes: 30
+  max_triggers_per_window: 2
+
+# === Robustness Testing ===
+robustness:
+  n_runs: 1000
+  random_seed: 42
+  min_trades: 8
+
+# === System Improvement Reviews ===
+system_improvements:
+  review_cadence: weekly
+  review_day: sunday
+  max_requests_per_agent_per_cycle: 3
+  auto_decline_after_weeks: 8
+
+# === Logging ===
+logging:
+  level: INFO
+  format: json
+  retention_days: 30
+
+# === Dry Run ===
+# If true, log everything but place no real orders
+dry_run: true
