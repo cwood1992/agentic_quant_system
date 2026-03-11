@@ -126,24 +126,47 @@ def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
         _update_registry(db_path, strategy_id, agent_id,
                          backtest_results='{"status":"running"}')
 
-        # Dynamically load the strategy class from its module
-        try:
-            module = importlib.import_module(namespace)
-            strategy_class = next(
-                v for _k, v in vars(module).items()
-                if isinstance(v, type)
-                and issubclass(v, BaseStrategy)
-                and v is not BaseStrategy
-            )
-        except Exception as exc:
-            logger.error("Cannot load strategy class for %s: %s", strategy_id, exc)
+        # Dynamically load the strategy class.
+        # Derive module path from strategy_id (strategies.hypotheses.<strategy_id>)
+        # and fall back to namespace if that fails.
+        strategy_class = None
+        module_candidates = [
+            f"strategies.hypotheses.{strategy_id}",
+            namespace,
+        ]
+        load_error = None
+        for module_path in module_candidates:
+            try:
+                module = importlib.import_module(module_path)
+                strategy_class = next(
+                    v for _k, v in vars(module).items()
+                    if isinstance(v, type)
+                    and issubclass(v, BaseStrategy)
+                    and v is not BaseStrategy
+                )
+                break
+            except StopIteration:
+                load_error = f"No BaseStrategy subclass in module '{module_path}'"
+            except Exception as exc:
+                load_error = str(exc)
+
+        if strategy_class is None:
+            logger.error("Cannot load strategy class for %s: %s", strategy_id, load_error)
             _update_registry(db_path, strategy_id, agent_id,
                              stage="graveyard",
-                             backtest_results=_json.dumps({"error": str(exc)}))
+                             backtest_results=_json.dumps({"error": load_error}))
             continue
 
+        # Ensure pair and timeframe are set in config for the runner
+        if "pair" not in hypothesis_config:
+            target_pairs = hypothesis_config.get("target_pairs", ["BTC/USD"])
+            hypothesis_config["pair"] = target_pairs[0] if target_pairs else "BTC/USD"
+        if "timeframe" not in hypothesis_config:
+            hypothesis_config["timeframe"] = "4h"
+
         # Run backtest
-        logger.info("Running backtest for %s", strategy_id)
+        logger.info("Running backtest for %s (pair=%s tf=%s)",
+                    strategy_id, hypothesis_config["pair"], hypothesis_config["timeframe"])
         results = runner.run_backtest(strategy_class, hypothesis_config)
 
         if results.get("success"):

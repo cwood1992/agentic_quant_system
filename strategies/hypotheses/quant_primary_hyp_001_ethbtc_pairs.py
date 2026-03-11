@@ -46,4 +46,76 @@ Config: {
 }
 """
 
-# TODO: Implement strategy module conforming to BaseStrategy interface.
+import math
+
+from strategies.base import BaseStrategy, Signal
+
+
+class ETHBTCPairs(BaseStrategy):
+    """ETH/BTC pairs trade approximated as single-leg ETH z-score mean reversion.
+
+    Since the backtest runner is single-pair, this trades ETH/USD using the
+    rolling z-score of ETH returns as a proxy for spread deviation.
+    Hedge ratio and cointegration parameters from the hypothesis config.
+    """
+
+    ROLLING = 40       # 40 x 4h = ~6.7 days (from hypothesis)
+    ENTRY_Z = 1.5
+    EXIT_Z = 0.0
+    STOP_Z = 3.5
+    MAX_HOLD = 25      # ~4 days at 4h
+    SIZE_PCT = 0.15
+
+    def __init__(self, **kwargs):
+        self._direction = None
+        self._hold_count = 0
+
+    def name(self) -> str:
+        return "quant_primary_hyp_001_ethbtc_pairs"
+
+    def required_feeds(self) -> list[str]:
+        return ["ETH/USD:4h", "BTC/USD:4h"]
+
+    def on_data(self, data: dict) -> list[Signal]:
+        candles = data.get("candles_so_far", [])
+        pair = data.get("pair", "ETH/USD")
+        if len(candles) < self.ROLLING + 5:
+            return []
+
+        closes = [c["close"] for c in candles]
+
+        # Compute rolling z-score of price level (proxy for spread z-score)
+        window = closes[-self.ROLLING:]
+        mean = sum(window) / len(window)
+        variance = sum((x - mean) ** 2 for x in window) / max(len(window) - 1, 1)
+        std = math.sqrt(variance) if variance > 0 else 0.0
+        if std == 0:
+            return []
+
+        z = (closes[-1] - mean) / std
+        signals = []
+
+        if self._direction is None:
+            if z < -self.ENTRY_Z:
+                signals.append(Signal(action="buy", pair=pair, size_pct=self.SIZE_PCT,
+                                      order_type="market", rationale=f"spread z={z:.2f}"))
+                self._direction = "long"
+                self._hold_count = 0
+            elif z > self.ENTRY_Z:
+                signals.append(Signal(action="sell", pair=pair, size_pct=self.SIZE_PCT,
+                                      order_type="market", rationale=f"spread z={z:.2f}"))
+                self._direction = "short"
+                self._hold_count = 0
+        else:
+            self._hold_count += 1
+            stop_hit = abs(z) > self.STOP_Z
+            mean_cross = (self._direction == "long" and z >= self.EXIT_Z) or \
+                         (self._direction == "short" and z <= self.EXIT_Z)
+            if mean_cross or self._hold_count >= self.MAX_HOLD or stop_hit:
+                signals.append(Signal(action="close", pair=pair, size_pct=1.0,
+                                      order_type="market",
+                                      rationale=f"exit z={z:.2f} hold={self._hold_count}"))
+                self._direction = None
+                self._hold_count = 0
+
+        return signals

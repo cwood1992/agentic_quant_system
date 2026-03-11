@@ -43,4 +43,84 @@ Config: {
 }
 """
 
-# TODO: Implement strategy module conforming to BaseStrategy interface.
+import math
+
+from strategies.base import BaseStrategy, Signal
+
+
+class BTC4hOscillation(BaseStrategy):
+    """Counter-trend strategy fading 64h BTC cumulative return extremes."""
+
+    LOOKBACK = 16      # 16 x 4h = 64h window
+    ROLLING = 30       # rolling periods for mean/std
+    ENTRY_Z = 2.0
+    EXIT_Z = 0.5
+    MAX_HOLD = 8
+    SIZE_PCT = 0.20
+    STOP_PCT = 0.03
+
+    def __init__(self, **kwargs):
+        self._direction = None
+        self._hold_count = 0
+        self._entry_price = None
+
+    def name(self) -> str:
+        return "quant_primary_hyp_001_btc_4h_oscillation"
+
+    def required_feeds(self) -> list[str]:
+        return ["BTC/USD:4h"]
+
+    def on_data(self, data: dict) -> list[Signal]:
+        candles = data.get("candles_so_far", [])
+        pair = data.get("pair", "BTC/USD")
+        if len(candles) < self.LOOKBACK + self.ROLLING + 1:
+            return []
+
+        closes = [c["close"] for c in candles]
+        cum_rets = [
+            (closes[i] - closes[i - self.LOOKBACK]) / closes[i - self.LOOKBACK]
+            for i in range(self.LOOKBACK, len(closes))
+        ]
+        if len(cum_rets) < self.ROLLING:
+            return []
+
+        window = cum_rets[-self.ROLLING:]
+        mean = sum(window) / len(window)
+        variance = sum((x - mean) ** 2 for x in window) / max(len(window) - 1, 1)
+        std = math.sqrt(variance) if variance > 0 else 0.0
+        if std == 0:
+            return []
+
+        z = (cum_rets[-1] - mean) / std
+        current_price = closes[-1]
+        signals = []
+
+        if self._direction is None:
+            if z < -self.ENTRY_Z:
+                signals.append(Signal(action="buy", pair=pair, size_pct=self.SIZE_PCT,
+                                      order_type="market", rationale=f"z={z:.2f}"))
+                self._direction = "long"
+                self._hold_count = 0
+                self._entry_price = current_price
+            elif z > self.ENTRY_Z:
+                signals.append(Signal(action="sell", pair=pair, size_pct=self.SIZE_PCT,
+                                      order_type="market", rationale=f"z={z:.2f}"))
+                self._direction = "short"
+                self._hold_count = 0
+                self._entry_price = current_price
+        else:
+            self._hold_count += 1
+            stop_hit = False
+            if self._entry_price and self._entry_price > 0:
+                move = (current_price - self._entry_price) / self._entry_price
+                stop_hit = (self._direction == "long" and move < -self.STOP_PCT) or \
+                           (self._direction == "short" and move > self.STOP_PCT)
+            if abs(z) < self.EXIT_Z or self._hold_count >= self.MAX_HOLD or stop_hit:
+                signals.append(Signal(action="close", pair=pair, size_pct=1.0,
+                                      order_type="market",
+                                      rationale=f"exit z={z:.2f} hold={self._hold_count}"))
+                self._direction = None
+                self._hold_count = 0
+                self._entry_price = None
+
+        return signals
