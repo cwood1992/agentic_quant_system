@@ -85,7 +85,7 @@ Prior-art check (graveyard + relevant history — has this been tried?)
     ↓
 Formulate (hypothesis + counterfactual + success criteria)
     ↓
-Code (strategy module conforming to the module interface)
+Code (write the BaseStrategy subclass in the `code` field of the hypothesis JSON — see format below)
     ↓
 Queue (submit via new_hypotheses in JSON output)
 ```
@@ -220,11 +220,22 @@ Forward progression only. Demotion (live → paper) permitted. Any stage can ter
     "null_hypothesis": "if strategy does not beat this, thesis is wrong"
   },
   "failure_modes": ["conditions that would falsify the thesis"],
-  "code_module": "strategies/backtest/{namespace}_{hypothesis_id}.py"
+  "code": "import math\nfrom strategies.base import BaseStrategy, Signal\n\nclass MyStrategy(BaseStrategy):\n    def __init__(self, **kwargs): ...\n    def name(self) -> str: return 'my_strategy'\n    def required_feeds(self) -> list[str]: return ['BTC/USD:4h']\n    def on_data(self, data: dict) -> list[Signal]:\n        candles = data.get('candles_so_far', [])\n        # ... signal logic returning list[Signal] ...\n        return []"
 }
 ```
 
-You also write the corresponding strategy module at `code_module` path.
+**`code` is required.** Write a complete Python string (JSON-escaped) implementing `BaseStrategy`. The class must define `name()`, `required_feeds()`, and `on_data(data)`. This code is written verbatim to `strategies/hypotheses/{strategy_id}.py` and loaded by the backtest runner. If omitted, the backtest cannot run.
+
+BaseStrategy interface (`strategies/base.py`):
+```
+name() -> str                        # unique identifier matching hypothesis_id
+required_feeds() -> list[str]        # e.g. ["BTC/USD:4h", "ETH/USD:4h"]
+on_data(data: dict) -> list[Signal]  # data keys: candle, pair, index, candles_so_far
+
+Signal(action, pair, size_pct, order_type="market", limit_price=None, rationale="")
+  action: "buy" | "sell" | "close" | "hold"
+  size_pct: fraction of capital (0.0–1.0); use 1.0 for "close entire position"
+```
 
 ### Stage 2 — Backtest
 
