@@ -4,17 +4,24 @@ Handles startup sequencing, signal-based graceful shutdown, data collector
 thread management, and wake controller lifecycle.
 """
 
+import importlib
+import json as _json
 import signal
 import sys
 import threading
+from datetime import datetime, timezone
 
+from benchmarks.tracker import BenchmarkTracker
 from config import load_config, validate_config
+from dashboard.generator import generate_dashboard
 from data_collector.collector import OHLCVCollector
 from data_collector.feeds.feed_manager import FeedManager
 from database.schema import create_all_tables, get_db
 from exchange.connector import create_exchange, verify_connection
 from logging_config import get_logger, setup_logging
 from state_generator import write_state_md
+from strategies.backtest_runner import BacktestRunner
+from strategies.base import BaseStrategy
 from wake_controller.controller import WakeController
 
 # Global shutdown state
@@ -51,6 +58,162 @@ def _signal_handler(signum, frame):
         sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Backtest runner helpers
+# ---------------------------------------------------------------------------
+
+def _get_latest_close(db_path: str, pair: str, timeframe: str = "1h") -> float | None:
+    """Return the most recent close price for a pair/timeframe from ohlcv_cache."""
+    conn = get_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT close FROM ohlcv_cache WHERE pair=? AND timeframe=? "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (pair, timeframe),
+        ).fetchone()
+        return float(row["close"]) if row else None
+    finally:
+        conn.close()
+
+
+def _update_registry(
+    db_path: str,
+    strategy_id: str,
+    agent_id: str,
+    stage: str | None = None,
+    backtest_results: str | None = None,
+) -> None:
+    """Update a strategy_registry row's stage and/or backtest_results."""
+    conn = get_db(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        if stage is not None:
+            conn.execute(
+                "UPDATE strategy_registry SET stage=?, backtest_results=?, updated_at=? "
+                "WHERE strategy_id=? AND agent_id=?",
+                (stage, backtest_results, now, strategy_id, agent_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE strategy_registry SET backtest_results=?, updated_at=? "
+                "WHERE strategy_id=? AND agent_id=?",
+                (backtest_results, now, strategy_id, agent_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
+    """Find hypothesis-stage strategies with no backtest and run them."""
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM strategy_registry "
+            "WHERE stage='hypothesis' AND backtest_results IS NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for row in rows:
+        strategy_id = row["strategy_id"]
+        agent_id = row["agent_id"]
+        namespace = row["namespace"]
+        config_json = row["config"] or "{}"
+        hypothesis_config = _json.loads(config_json)
+
+        # Mark in-progress so this hypothesis isn't picked up again on the next poll
+        _update_registry(db_path, strategy_id, agent_id,
+                         backtest_results='{"status":"running"}')
+
+        # Dynamically load the strategy class from its module
+        try:
+            module = importlib.import_module(namespace)
+            strategy_class = next(
+                v for _k, v in vars(module).items()
+                if isinstance(v, type)
+                and issubclass(v, BaseStrategy)
+                and v is not BaseStrategy
+            )
+        except Exception as exc:
+            logger.error("Cannot load strategy class for %s: %s", strategy_id, exc)
+            _update_registry(db_path, strategy_id, agent_id,
+                             stage="graveyard",
+                             backtest_results=_json.dumps({"error": str(exc)}))
+            continue
+
+        # Run backtest
+        logger.info("Running backtest for %s", strategy_id)
+        results = runner.run_backtest(strategy_class, hypothesis_config)
+
+        if results.get("success"):
+            logger.info(
+                "Backtest passed for %s: %d trades, sharpe=%.2f",
+                strategy_id, results.get("trade_count", 0), results.get("sharpe_ratio", 0),
+            )
+            _update_registry(db_path, strategy_id, agent_id,
+                             stage="backtest",
+                             backtest_results=_json.dumps(results))
+        else:
+            logger.warning("Backtest failed for %s: %s",
+                           strategy_id, results.get("failure_reason"))
+            _update_registry(db_path, strategy_id, agent_id,
+                             stage="graveyard",
+                             backtest_results=_json.dumps(results))
+
+
+def _run_backtest_loop(db_path: str, shutdown_event: threading.Event,
+                       poll_interval: int = 60) -> None:
+    """Background thread: poll for pending hypotheses and run backtests."""
+    runner = BacktestRunner(db_path)
+    logger.info("Backtest runner thread started (poll every %ds)", poll_interval)
+    while not shutdown_event.wait(timeout=poll_interval):
+        try:
+            _process_pending_backtests(runner, db_path)
+        except Exception:
+            logger.exception("Error in backtest loop")
+    logger.info("Backtest runner thread stopped")
+
+
+# ---------------------------------------------------------------------------
+# Benchmark tracker helpers
+# ---------------------------------------------------------------------------
+
+def _elapsed_weeks(tracker: BenchmarkTracker, bench_id: str) -> int:
+    """Return number of whole weeks since the first history entry for a benchmark."""
+    data = tracker._get_benchmark(bench_id)
+    if not data:
+        return 0
+    history = data.get("history", [])
+    if not history:
+        return 0
+    first = datetime.fromisoformat(history[0]["timestamp"])
+    now = datetime.now(timezone.utc)
+    return int((now - first).total_seconds() / 604800)
+
+
+def _run_benchmark_loop(tracker: BenchmarkTracker, db_path: str,
+                        shutdown_event: threading.Event,
+                        poll_interval: int = 900) -> None:
+    """Background thread: update benchmark values from latest OHLCV prices."""
+    logger.info("Benchmark tracker thread started (poll every %ds)", poll_interval)
+    while not shutdown_event.wait(timeout=poll_interval):
+        try:
+            btc_price = _get_latest_close(db_path, "BTC/USD")
+            eth_price = _get_latest_close(db_path, "ETH/USD")
+            if btc_price:
+                tracker.update_hodl("hodl_btc", btc_price)
+                elapsed = _elapsed_weeks(tracker, "dca_btc")
+                tracker.update_dca("dca_btc", btc_price, elapsed)
+            if eth_price:
+                tracker.update_hodl("hodl_eth", eth_price)
+            if btc_price and eth_price:
+                tracker.update_equal_weight("equal_weight_rebal", btc_price, eth_price)
+        except Exception:
+            logger.exception("Error in benchmark update loop")
+    logger.info("Benchmark tracker thread stopped")
+
+
 def main():
     """Run the full system startup sequence and block until shutdown."""
     global logger
@@ -73,6 +236,10 @@ def main():
     db_path = config.get("system", {}).get("db_path", "data/system.db")
     create_all_tables(db_path)
     logger.info("Database tables initialised at %s", db_path)
+
+    # --- 4b. Seed benchmarks ---
+    benchmark_tracker = BenchmarkTracker(db_path)
+    logger.info("BenchmarkTracker initialised (benchmarks seeded)")
 
     # --- 5. Connect to exchange ---
     exchange = create_exchange(config)
@@ -102,6 +269,26 @@ def main():
     )
     collector_thread.start()
     logger.info("Data collector thread started")
+
+    # --- 6b. Start backtest runner thread ---
+    backtest_thread = threading.Thread(
+        target=_run_backtest_loop,
+        args=(db_path, shutdown_event),
+        name="BacktestRunner",
+        daemon=True,
+    )
+    backtest_thread.start()
+    logger.info("Backtest runner thread started")
+
+    # --- 6c. Start benchmark tracker thread ---
+    benchmark_thread = threading.Thread(
+        target=_run_benchmark_loop,
+        args=(benchmark_tracker, db_path, shutdown_event),
+        name="BenchmarkTracker",
+        daemon=True,
+    )
+    benchmark_thread.start()
+    logger.info("Benchmark tracker thread started")
 
     # --- 7. Start supplementary feed manager thread ---
     feed_cfg = config.get("supplementary_feeds", {})
@@ -136,6 +323,11 @@ def main():
     def _run_agent_cycle_with_state(agent_id, wake_reason="scheduled"):
         _original_run_agent_cycle(agent_id, wake_reason)
         write_state_md(db_path, config)
+        try:
+            output_path = config.get("system", {}).get("dashboard_output", "dashboard/output")
+            generate_dashboard(db_path, config, output_path)
+        except Exception:
+            logger.exception("Dashboard generation failed")
 
     wake_controller._run_agent_cycle = _run_agent_cycle_with_state
 
@@ -163,13 +355,25 @@ def main():
     wake_controller.stop()
     logger.info("Wake controller stopped")
 
-    # Stop data collector and feed manager (shared shutdown_event)
+    # Stop all background threads (shared shutdown_event)
     shutdown_event.set()
     collector_thread.join(timeout=30)
     if collector_thread.is_alive():
         logger.warning("Data collector thread did not stop within timeout")
     else:
         logger.info("Data collector thread stopped")
+
+    backtest_thread.join(timeout=15)
+    if backtest_thread.is_alive():
+        logger.warning("Backtest runner thread did not stop within timeout")
+    else:
+        logger.info("Backtest runner thread stopped")
+
+    benchmark_thread.join(timeout=10)
+    if benchmark_thread.is_alive():
+        logger.warning("Benchmark tracker thread did not stop within timeout")
+    else:
+        logger.info("Benchmark tracker thread stopped")
 
     if feed_manager_thread is not None:
         feed_manager_thread.join(timeout=15)
@@ -188,6 +392,7 @@ def main():
         logger.exception("Failed to checkpoint database WAL")
 
     logger.info("Shutdown complete")
+    sys.exit(0)
 
 
 if __name__ == "__main__":

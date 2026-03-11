@@ -3,6 +3,7 @@ vectorbt>=0.26
 ta>=0.11.0
 pandas>=2.1.0,<3.0
 numpy>=1.24.0
+statsmodels>=0.14
 apscheduler==3.10.4
 sqlalchemy==2.0.36
 anthropic>=0.40.0

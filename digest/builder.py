@@ -8,7 +8,7 @@ and queries SQLite directly.
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from data_collector.collector import compute_volatility_score
 from database.schema import get_db
@@ -151,57 +151,53 @@ class DigestBuilder:
     # ------------------------------------------------------------------
 
     def build_benchmark_section(self) -> str:
-        """Render all benchmarks with 24h/7d/30d performance columns.
+        """Render all benchmarks with current value and 24h/7d/30d performance.
 
-        Currently returns a placeholder structure. Real benchmark tracking
-        will be populated once the benchmark tracker is implemented.
+        Reads benchmark_* keys from system_state (written by BenchmarkTracker)
+        and formats performance data from each benchmark's history.
 
         Returns:
             Formatted benchmark section string.
         """
+        from benchmarks.tracker import BenchmarkTracker
+
+        tracker = BenchmarkTracker(self.db_path)
+
         conn = get_db(self.db_path)
         try:
-            # Check system_state for benchmark data
-            row = conn.execute(
-                "SELECT value FROM system_state WHERE key = 'benchmarks'"
-            ).fetchone()
-
-            if row:
-                benchmarks = json.loads(row["value"])
-            else:
-                # Default placeholder benchmarks
-                benchmarks = {
-                    "hodl_btc": {"description": "100% BTC from day one"},
-                    "hodl_eth": {"description": "100% ETH from day one"},
-                    "dca_btc": {"description": "DCA into BTC weekly"},
-                    "equal_weight_rebal": {"description": "50/50 BTC/ETH rebalanced weekly"},
-                }
-
-            lines = [
-                f"  {'Benchmark':<25} {'24h':>10} {'7d':>10} {'30d':>10}",
-                f"  {'-' * 25} {'-' * 10} {'-' * 10} {'-' * 10}",
-            ]
-
-            for bench_id, info in benchmarks.items():
-                # Pull performance data if stored, else show placeholder
-                if isinstance(info, dict):
-                    pct_24h = info.get("pct_24h", "n/a")
-                    pct_7d = info.get("pct_7d", "n/a")
-                    pct_30d = info.get("pct_30d", "n/a")
-                else:
-                    pct_24h = pct_7d = pct_30d = "n/a"
-
-                pct_24h_str = f"{pct_24h:>10}" if isinstance(pct_24h, (int, float)) else f"{pct_24h:>10}"
-                pct_7d_str = f"{pct_7d:>10}" if isinstance(pct_7d, (int, float)) else f"{pct_7d:>10}"
-                pct_30d_str = f"{pct_30d:>10}" if isinstance(pct_30d, (int, float)) else f"{pct_30d:>10}"
-
-                lines.append(f"  {bench_id:<25} {pct_24h_str} {pct_7d_str} {pct_30d_str}")
-
-            content = "\n".join(lines)
-            return self._collapse_if_empty("BENCHMARK PERFORMANCE", content)
-
+            rows = conn.execute(
+                "SELECT key FROM system_state WHERE key LIKE 'benchmark_%'"
+            ).fetchall()
         finally:
             conn.close()
+
+        def _fmt_pct(v: float | None) -> str:
+            return f"{v * 100:+.1f}%" if v is not None else "n/a"
+
+        lines = [
+            f"  {'Benchmark':<25} {'Current':>10} {'Total':>8} {'24h':>8} {'7d':>8} {'30d':>8}",
+            f"  {'-' * 25} {'-' * 10} {'-' * 8} {'-' * 8} {'-' * 8} {'-' * 8}",
+        ]
+
+        for row in rows:
+            bench_id = row["key"][len("benchmark_"):]  # strip "benchmark_" prefix
+            perf = tracker.get_benchmark_performance(bench_id)
+            if perf is None:
+                continue
+            lines.append(
+                f"  {bench_id:<25} "
+                f"${perf['current_value']:>9.2f} "
+                f"{_fmt_pct(perf['total_return']):>8} "
+                f"{_fmt_pct(perf['return_24h']):>8} "
+                f"{_fmt_pct(perf['return_7d']):>8} "
+                f"{_fmt_pct(perf['return_30d']):>8}"
+            )
+
+        if len(lines) == 2:
+            lines.append("  No benchmark data yet — seeding in progress")
+
+        content = "\n".join(lines)
+        return self._collapse_if_empty("BENCHMARK PERFORMANCE", content)
 
     # ------------------------------------------------------------------
     # 3. Strategy sections
@@ -362,8 +358,22 @@ class DigestBuilder:
         if not pairs:
             return self._collapse_if_empty("MARKET CONDITIONS", "")
 
+        def _close_at(conn, pair: str, before_ts: str) -> float | None:
+            """Return the most recent 1h close price at or before before_ts."""
+            row = conn.execute(
+                "SELECT close FROM ohlcv_cache WHERE pair=? AND timeframe='1h' "
+                "AND timestamp<=? ORDER BY timestamp DESC LIMIT 1",
+                (pair, before_ts),
+            ).fetchone()
+            return float(row["close"]) if row else None
+
         conn = get_db(self.db_path)
         try:
+            now_dt = datetime.now(timezone.utc)
+            ts_24h = (now_dt - timedelta(hours=24)).isoformat()
+            ts_7d  = (now_dt - timedelta(days=7)).isoformat()
+            ts_30d = (now_dt - timedelta(days=30)).isoformat()
+
             lines = []
             for pair in pairs:
                 # Latest OHLCV candle (1h)
@@ -388,11 +398,24 @@ class DigestBuilder:
                         f"L={candle['low']:.2f} C={candle['close']:.2f} V={candle['volume']:.2f}"
                     )
                     lines.append(f"    As of: {candle['timestamp']}")
+
+                    # Price changes vs historical closes
+                    cn = float(candle["close"])
+                    c24 = _close_at(conn, pair, ts_24h)
+                    c7d = _close_at(conn, pair, ts_7d)
+                    c30 = _close_at(conn, pair, ts_30d)
+
+                    def _pct(now: float, prev: float | None) -> str:
+                        return f"{(now / prev - 1) * 100:+.1f}%" if prev else "n/a"
+
+                    lines.append(
+                        f"    Change: 24h={_pct(cn, c24)}  7d={_pct(cn, c7d)}  30d={_pct(cn, c30)}"
+                    )
                 else:
                     lines.append(f"  {pair}:")
                     lines.append("    Latest 1h: no data")
 
-                lines.append(f"    Volatility score: {vol_score}")
+                lines.append(f"    Volatility score: {vol_score:.1f}/100  (annualised vol ×100, cap=100)")
 
             # Supplementary feeds — split into standard and prediction market feeds
             _PREDICTION_MARKET_FEEDS = {"polymarket", "kalshi"}
@@ -412,9 +435,9 @@ class DigestBuilder:
             ).fetchall()
 
             standard_feeds = [f for f in feed_rows if f["feed_name"] not in _PREDICTION_MARKET_FEEDS]
-            pm_feed_names = [f["feed_name"] for f in feed_rows if f["feed_name"] in _PREDICTION_MARKET_FEEDS]
-
-            now_dt = datetime.now(timezone.utc)
+            pm_feed_names = list(dict.fromkeys(
+                f["feed_name"] for f in feed_rows if f["feed_name"] in _PREDICTION_MARKET_FEEDS
+            ))
 
             if standard_feeds:
                 lines.append("")

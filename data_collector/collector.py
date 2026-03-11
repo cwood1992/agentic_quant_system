@@ -30,11 +30,23 @@ class OHLCVCollector:
     MAX_RETRIES = 3
     RETRY_DELAY_S = 1.0
 
+    # Minimum seconds between fetches for each timeframe (timeframe_period / 4)
+    _TIMEFRAME_SECONDS = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "1h": 3600,
+        "4h": 14400,
+        "1d": 86400,
+    }
+
     def __init__(self, db_path: str, exchange: ccxt.Exchange, config: dict):
         self.db_path = db_path
         self.exchange = exchange
         self.config = config
         self.logger = get_logger("data_collector.collector")
+        # Tracks last successful fetch time per (pair, timeframe)
+        self._last_fetch: dict[tuple[str, str], float] = {}
 
     # ------------------------------------------------------------------
     # Core collection
@@ -46,20 +58,28 @@ class OHLCVCollector:
         """Fetch OHLCV data for every pair/timeframe combo and upsert into DB.
 
         Each combination is fetched with up to ``MAX_RETRIES`` attempts when
-        the exchange raises ``RateLimitExceeded``.
+        the exchange raises ``RateLimitExceeded``.  Fetches are skipped when
+        less than ``timeframe_period / 4`` has elapsed since the last fetch,
+        preventing unnecessary exchange API calls for slow timeframes.
 
         Args:
             pairs: List of trading pairs (e.g. ``["BTC/USDT", "ETH/USDT"]``).
             timeframes: List of timeframe strings (e.g. ``["1h", "4h"]``).
         """
+        now = time.time()
         conn = get_db(self.db_path)
         try:
             for pair in pairs:
                 for timeframe in timeframes:
+                    min_interval = self._TIMEFRAME_SECONDS.get(timeframe, 60) / 4
+                    last = self._last_fetch.get((pair, timeframe), 0.0)
+                    if now - last < min_interval:
+                        continue
                     candles = self._fetch_with_retry(pair, timeframe)
                     if candles is None:
                         continue
                     self._upsert_candles(conn, pair, timeframe, candles)
+                    self._last_fetch[(pair, timeframe)] = time.time()
         finally:
             conn.close()
 

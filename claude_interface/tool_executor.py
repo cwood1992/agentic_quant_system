@@ -106,7 +106,7 @@ def handle_run_analysis(params: dict, agent_id: str, db_path: str) -> str:
     """Run statistical analysis on market data via AnalysisEngine.
 
     Supports: correlation, autocorrelation, distribution, cointegration,
-    rolling_sharpe. Returns not_available for orderbook/funding_rates/custom
+    rolling_sharpe, rolling_beta. Returns not_available for orderbook/funding_rates/custom
     (no local data source yet — submit a data_request instead).
     Timeout: 60s max.
     """
@@ -139,8 +139,27 @@ def handle_run_analysis(params: dict, agent_id: str, db_path: str) -> str:
             "error": f"Unknown analysis_type '{analysis_type}'.",
         })
 
+    # Methods that accept a single pair string and must be called per-pair
+    _per_pair_methods = {"autocorrelation", "distribution", "rolling_sharpe"}
+
     try:
-        results = method(pairs, timeframe, lookback_days)
+        if analysis_type == "rolling_beta":
+            target = pairs[0] if pairs else params.get("target", "")
+            reference = params.get("reference", "")
+            window_days = int(params.get("window_days", 30))
+            if not target or not reference:
+                results = {"error": "rolling_beta requires pairs[0] as target and 'reference' param"}
+            else:
+                results = engine.rolling_beta(target, reference, timeframe, window_days, lookback_days)
+        elif analysis_type in _per_pair_methods:
+            # Run once per pair, return dict keyed by pair
+            results = {}
+            for pair in pairs:
+                results[pair] = method(pair, timeframe, lookback_days)
+        else:
+            # correlation / cointegration accept the full list
+            results = method(pairs, timeframe, lookback_days)
+
         logger.info(
             "Analysis %s completed for pairs=%s timeframe=%s lookback=%d",
             analysis_type, pairs, timeframe, lookback_days,

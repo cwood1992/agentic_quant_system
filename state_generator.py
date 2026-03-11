@@ -137,6 +137,20 @@ def generate_state_md(db_path: str, config: dict) -> str:
         lines.append(f"| Last Cycle Notes | {last_notes} |")
         lines.append("")
 
+        # Research notes (pre-hypothesis observations)
+        research_notes = _get_research_notes(conn, agent_id)
+        if research_notes:
+            lines.append(f"### Research Notes ({len(research_notes)} active)")
+            lines.append("")
+            lines.append("| ID | Age | Status | Summary |")
+            lines.append("|----|-----|--------|---------|")
+            for note in research_notes:
+                summary = note["summary"]
+                if len(summary) > 80:
+                    summary = summary[:80] + "…"
+                lines.append(f"| {note['note_id']} | {note['age_cycles']}c | {note['status']} | {summary} |")
+            lines.append("")
+
     conn.close()
     return "\n".join(lines)
 
@@ -234,6 +248,25 @@ def _get_consecutive_failures(conn, agent_id: str) -> int:
             (agent_id,),
         ).fetchone()
         return row["cnt"] if row else 0
+
+
+def _get_research_notes(conn, agent_id: str) -> list[dict]:
+    """Return active research notes for an agent."""
+    rows = conn.execute(
+        "SELECT note_id, status, observation, age_cycles FROM research_notes "
+        "WHERE agent_id = ? AND status NOT IN ('promoted', 'abandoned') "
+        "ORDER BY created_at ASC",
+        (agent_id,),
+    ).fetchall()
+    notes = []
+    for row in rows:
+        notes.append({
+            "note_id": row["note_id"],
+            "status": row["status"],
+            "age_cycles": row["age_cycles"],
+            "summary": row["observation"] or "",
+        })
+    return notes
 
 
 def _get_last_cycle_notes(conn, agent_id: str) -> str:

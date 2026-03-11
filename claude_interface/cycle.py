@@ -95,6 +95,7 @@ def run_cycle(
             digest=digest,
             wake_reason=wake_reason,
             db_path=db_path,
+            cycle_number=cycle_number,
         )
     except Exception as exc:
         logger.error("Agent call raised exception: %s", exc, exc_info=True)

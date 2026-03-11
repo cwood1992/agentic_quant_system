@@ -210,7 +210,28 @@ class AnalysisEngine:
             cov = float(np.mean((returns[: n - lag] - mean) * (returns[lag:] - mean)))
             lags[str(lag)] = round(cov / var, 6)
 
-        return {"pair": pair, "lags": lags}
+        # Ljung-Box p-values: p<0.05 means that lag's autocorrelation is significant
+        ljung_box_pvalues: dict = {}
+        try:
+            from statsmodels.stats.diagnostic import acorr_ljungbox
+            max_test_lag = min(max_lag, n // 5)
+            if max_test_lag >= 1:
+                lb = acorr_ljungbox(
+                    returns, lags=list(range(1, max_test_lag + 1)), return_df=True
+                )
+                ljung_box_pvalues = {
+                    str(int(lag)): round(float(pval), 6)
+                    for lag, pval in lb["lb_pvalue"].items()
+                }
+        except Exception:
+            pass  # statsmodels unavailable or insufficient data
+
+        return {
+            "pair": pair,
+            "lags": lags,
+            "ljung_box_pvalues": ljung_box_pvalues,
+            "ljung_box_note": "p<0.05 means autocorrelation at that lag is statistically significant",
+        }
 
     # ------------------------------------------------------------------
     # 4. Return distribution
@@ -335,6 +356,23 @@ class AnalysisEngine:
             lag1_autocorr = 0.0
             mean_reversion_score = 0.5
 
+        # Half-life from AR(1): periods for spread to revert halfway
+        if 0 < lag1_autocorr < 1:
+            half_life_periods = round(-np.log(2) / np.log(lag1_autocorr), 2)
+        else:
+            half_life_periods = None  # diverging (>=1) or already mean-reverting (<=0)
+
+        # ADF test on residuals for stationarity
+        adf_statistic = None
+        adf_pvalue = None
+        try:
+            from statsmodels.tsa.stattools import adfuller
+            adf_result = adfuller(residuals, autolag="AIC")
+            adf_statistic = round(float(adf_result[0]), 6)
+            adf_pvalue = round(float(adf_result[1]), 6)
+        except Exception:
+            pass  # statsmodels unavailable
+
         return {
             "pair_a": pairs[0],
             "pair_b": pairs[1],
@@ -345,6 +383,75 @@ class AnalysisEngine:
             "lag1_autocorrelation": round(lag1_autocorr, 6),
             "mean_reversion_score": round(mean_reversion_score, 4),
             "n_observations": min_len,
+            "half_life_periods": half_life_periods,
+            "adf_statistic": adf_statistic,
+            "adf_pvalue": adf_pvalue,
+            "adf_note": "p<0.05 rejects unit root — spread is stationary (supports mean reversion)",
+        }
+
+    # ------------------------------------------------------------------
+    # 6. Rolling beta
+    # ------------------------------------------------------------------
+
+    def rolling_beta(
+        self,
+        target: str,
+        reference: str,
+        timeframe: str,
+        window_days: int = 30,
+        lookback_days: int = 180,
+    ) -> dict:
+        """Compute rolling beta of target returns vs reference returns.
+
+        At each rolling window, beta = cov(target, reference) / var(reference).
+        A beta > 1 means the target amplifies reference moves.
+
+        Args:
+            target: Trading pair whose beta is being measured.
+            reference: Reference pair (e.g. 'BTC/USD').
+            timeframe: OHLCV timeframe.
+            window_days: Rolling window width in days.
+            lookback_days: Total history to load.
+
+        Returns:
+            Dict with current_beta, mean_beta, min_beta, max_beta, beta_std, n_windows.
+        """
+        target_closes = self._load_closes(target, timeframe, lookback_days)
+        ref_closes = self._load_closes(reference, timeframe, lookback_days)
+
+        n = min(len(target_closes), len(ref_closes))
+        if n < 10:
+            return {"error": f"Insufficient data: {n} observations for {target}/{reference}"}
+
+        target_returns = np.diff(np.log(target_closes[-n:]))
+        ref_returns = np.diff(np.log(ref_closes[-n:]))
+
+        candles_per_day = {"1h": 24, "4h": 6, "1d": 1}.get(timeframe, 24)
+        window = max(10, window_days * candles_per_day)
+
+        betas = []
+        for i in range(window, len(target_returns) + 1):
+            t = target_returns[i - window : i]
+            r = ref_returns[i - window : i]
+            var_r = float(np.var(r, ddof=1))
+            if var_r > 0:
+                betas.append(float(np.cov(t, r, ddof=1)[0, 1] / var_r))
+
+        if not betas:
+            return {"error": f"Window ({window} candles) too large for available data ({len(target_returns)})"}
+
+        return {
+            "target": target,
+            "reference": reference,
+            "timeframe": timeframe,
+            "window_days": window_days,
+            "current_beta": round(betas[-1], 4),
+            "mean_beta": round(float(np.mean(betas)), 4),
+            "min_beta": round(float(np.min(betas)), 4),
+            "max_beta": round(float(np.max(betas)), 4),
+            "beta_std": round(float(np.std(betas, ddof=1)), 4),
+            "n_windows": len(betas),
+            "note": "beta>1 means target amplifies reference moves; beta<1 means dampened",
         }
 
     # ------------------------------------------------------------------

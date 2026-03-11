@@ -10,6 +10,7 @@ from pathlib import Path
 
 import anthropic
 
+from billing.tracker import APIBudgetTracker
 from logging_config import get_logger
 from risk.limits import DEFAULT_MODEL, TRIGGER_MODEL, MAX_OUTPUT_TOKENS
 from database.schema import get_db
@@ -119,6 +120,7 @@ def call_agent(
     wake_reason: str,
     db_path: str,
     prior_response: dict | None = None,
+    cycle_number: int = 0,
 ) -> dict | None:
     """Invoke a Claude agent with digest and tool-use loop.
 
@@ -188,6 +190,18 @@ def call_agent(
                 agent_id, db_path, "", str(exc), wake_reason, model
             )
             return None
+
+        # Track API usage for budget monitoring (best-effort; never blocks the cycle)
+        try:
+            APIBudgetTracker(db_path).track_usage(
+                agent_id=agent_id,
+                cycle=cycle_number,
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                model=model,
+            )
+        except Exception:
+            pass
 
         if response.stop_reason == "end_turn":
             text = _extract_text(response)

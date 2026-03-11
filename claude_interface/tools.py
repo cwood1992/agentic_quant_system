@@ -9,8 +9,8 @@ COMMON_TOOLS = [
         "name": "run_analysis",
         "description": (
             "Run statistical analysis on market data. Returns results in this cycle. "
-            "Use for correlation, distribution, autocorrelation, cointegration. "
-            "Only analyses completing in <60s."
+            "Use for correlation, distribution, autocorrelation, cointegration, "
+            "rolling_sharpe, rolling_beta. Only analyses completing in <60s."
         ),
         "input_schema": {
             "type": "object",
@@ -23,6 +23,7 @@ COMMON_TOOLS = [
                         "autocorrelation",
                         "distribution",
                         "cointegration",
+                        "rolling_beta",
                         "orderbook",
                         "funding_rates",
                         "custom",
@@ -31,6 +32,14 @@ COMMON_TOOLS = [
                 "pairs": {"type": "array", "items": {"type": "string"}},
                 "timeframe": {"type": "string"},
                 "lookback_days": {"type": "integer"},
+                "reference": {
+                    "type": "string",
+                    "description": "Reference pair for rolling_beta (e.g. 'BTC/USD')",
+                },
+                "window_days": {
+                    "type": "integer",
+                    "description": "Rolling window in days for rolling_beta (default: 30)",
+                },
                 "description": {"type": "string"},
             },
             "required": ["analysis_type", "description"],

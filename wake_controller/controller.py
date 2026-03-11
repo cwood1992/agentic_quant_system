@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from claude_interface.cycle import run_cycle
 from database.schema import get_db
+from instruction_queue.processor import process_pending_instructions
 from logging_config import get_logger
 from wake_controller.cadence import compute_effective_cadence
 from wake_controller.triggers import (
@@ -82,7 +83,8 @@ class WakeController:
         """Stop the scheduler gracefully."""
         self._shutdown_event.set()
         try:
-            self._scheduler.shutdown(wait=True)
+            # wait=False: don't block if an agent cycle (API call) is in progress
+            self._scheduler.shutdown(wait=False)
         except Exception:
             logger.exception("Error shutting down scheduler")
         logger.info("WakeController stopped")
@@ -115,12 +117,20 @@ class WakeController:
         if existing:
             self._scheduler.remove_job(job_id)
 
+        # Fire immediately on first registration; subsequent reschedules use
+        # the interval trigger's natural next_run_time (no extra immediate wake).
+        is_first_schedule = agent_id not in self._agent_schedules
+        kwargs = {}
+        if is_first_schedule:
+            kwargs["next_run_time"] = datetime.now(timezone.utc)
+
         self._scheduler.add_job(
             self._run_agent_cycle,
             IntervalTrigger(hours=effective_cadence),
             id=job_id,
             name=f"Wake {agent_id}",
             args=[agent_id],
+            **kwargs,
         )
 
         self._agent_schedules[agent_id] = {
@@ -193,6 +203,27 @@ class WakeController:
         except Exception:
             logger.exception(
                 "Agent %s cycle %d failed with unhandled exception",
+                agent_id, cycle_number,
+            )
+
+        # Process any instructions the agent queued this cycle
+        try:
+            portfolio_value = self._get_portfolio_value()
+            results = process_pending_instructions(
+                db_path=self.db_path,
+                portfolio_value=portfolio_value,
+                exchange=self.exchange,
+                config=self.config,
+            )
+            if results:
+                logger.info(
+                    "Processed %d instructions for agent %s: %s",
+                    len(results), agent_id,
+                    {r["id"]: r["status"] for r in results},
+                )
+        except Exception:
+            logger.exception(
+                "Instruction processing failed for agent %s cycle %d",
                 agent_id, cycle_number,
             )
 
@@ -346,6 +377,14 @@ class WakeController:
                 "Applied wake_schedule_update for agent %s cycle %d: %s",
                 agent_id, cycle_number, mapped,
             )
+
+    def _get_portfolio_value(self) -> float:
+        """Return current portfolio USD value from exchange balance, or 0 on failure."""
+        try:
+            balance = self.exchange.fetch_balance()
+            return float(balance.get("total", {}).get("USD", 0.0))
+        except Exception:
+            return 0.0
 
     def _get_current_conditions(self) -> dict:
         """Gather current market/system conditions for modifier evaluation.
