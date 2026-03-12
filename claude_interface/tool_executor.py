@@ -65,7 +65,8 @@ def execute_tool_calls(
 
         try:
             # Dispatch based on handler signature needs
-            if tool_name in ("run_analysis", "check_backtest_status", "list_agent_messages"):
+            if tool_name in ("run_analysis", "check_backtest_status",
+                             "list_agent_messages", "write_strategy_code"):
                 result_str = handler(params, agent_id, db_path)
             elif tool_name == "query_memory":
                 result_str = handler(params, agent_id)
@@ -432,3 +433,65 @@ def handle_list_agent_messages(params: dict, agent_id: str, db_path: str) -> str
         })
     finally:
         conn.close()
+
+
+@_register("write_strategy_code")
+def handle_write_strategy_code(params: dict, agent_id: str, db_path: str) -> str:
+    """Write a BaseStrategy subclass to a hypothesis file.
+
+    Validates the code with compile() before writing. Creates the file in
+    strategies/hypotheses/{strategy_id}.py. Will not overwrite existing files
+    unless they contain only a TODO placeholder.
+
+    Timeout: <1s (file I/O).
+    """
+    import os
+    from pathlib import Path
+
+    logger = get_logger("claude_interface.tool_executor", agent_id=agent_id)
+
+    strategy_id = params.get("strategy_id", "").strip()
+    code = params.get("code", "").strip()
+
+    if not strategy_id:
+        return json.dumps({"error": "strategy_id is required"})
+    if not code:
+        return json.dumps({"error": "code is required"})
+
+    # Validate syntax
+    try:
+        compile(code, f"{strategy_id}.py", "exec")
+    except SyntaxError as exc:
+        return json.dumps({
+            "error": f"Syntax error in code: {exc}",
+            "strategy_id": strategy_id,
+        })
+
+    # Write to file
+    hyp_dir = Path("strategies") / "hypotheses"
+    hyp_dir.mkdir(parents=True, exist_ok=True)
+    hyp_file = hyp_dir / f"{strategy_id}.py"
+
+    # Only overwrite if file doesn't exist or contains a TODO placeholder
+    if hyp_file.exists():
+        existing = hyp_file.read_text(encoding="utf-8")
+        if "# TODO:" not in existing and "BaseStrategy" in existing:
+            return json.dumps({
+                "status": "skipped",
+                "strategy_id": strategy_id,
+                "note": "File already exists with implementation. Delete or rename to rewrite.",
+            })
+
+    header = (
+        f"# Strategy: {strategy_id}\n"
+        f"# Written by agent {agent_id} via write_strategy_code tool.\n\n"
+    )
+    hyp_file.write_text(header + code + "\n", encoding="utf-8")
+
+    logger.info("Wrote strategy code for %s (%d bytes)", strategy_id, len(code))
+    return json.dumps({
+        "status": "ok",
+        "strategy_id": strategy_id,
+        "file_path": str(hyp_file),
+        "code_length": len(code),
+    })

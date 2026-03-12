@@ -23,7 +23,11 @@ def verify_connection(exchange) -> dict:
     """Verify exchange connectivity by fetching balance."""
     try:
         balance = exchange.fetch_balance()
-        total_usd = balance["total"].get("USD", 0.0)
+        totals = balance.get("total", {})
+        total_usd = sum(
+            float(totals.get(sym, 0.0) or 0.0)
+            for sym in ("USD", "USDC", "USDT")
+        )
         logger.info("Exchange connection verified, total USD: %.2f", total_usd)
         return {"connected": True, "total_usd": total_usd}
     except Exception as e:

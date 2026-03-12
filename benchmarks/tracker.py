@@ -36,6 +36,18 @@ DEFAULT_BENCHMARKS = {
         "seed_capital": 500.0,
         "rebalance_interval_weeks": 1,
     },
+    "usdc_yield": {
+        "type": "yield",
+        "asset": "USDC",
+        "seed_capital": 500.0,
+        "apy": 0.035,  # 3.5% APY
+    },
+    "staked_eth": {
+        "type": "staked",
+        "asset": "ETH/USD",
+        "seed_capital": 500.0,
+        "staking_apy": 0.032,  # 3.2% APY staking reward
+    },
 }
 
 
@@ -252,6 +264,87 @@ class BenchmarkTracker:
         self._append_history(data, total_value)
         self._save_benchmark(benchmark_id, data)
 
+        return data
+
+    def update_yield(self, benchmark_id: str) -> dict | None:
+        """Update a stablecoin yield benchmark (e.g. USDC lending).
+
+        Computes compound interest from seed_capital at the configured APY
+        based on days elapsed since the benchmark was first seeded.
+
+        Args:
+            benchmark_id: Benchmark identifier (e.g. "usdc_yield").
+
+        Returns:
+            Updated benchmark dict, or None if not found.
+        """
+        data = self._get_benchmark(benchmark_id)
+        if data is None:
+            return None
+
+        seed_capital = data["seed_capital"]
+        apy = data.get("apy", 0.035)
+
+        # Calculate days elapsed from first history entry or seed time
+        history = data.get("history", [])
+        if history:
+            first_ts = datetime.fromisoformat(history[0]["timestamp"])
+        else:
+            first_ts = datetime.now(timezone.utc)
+
+        days_elapsed = (datetime.now(timezone.utc) - first_ts).total_seconds() / 86400
+        current_value = seed_capital * ((1 + apy) ** (days_elapsed / 365))
+        data["current_value"] = current_value
+
+        self._append_history(data, current_value)
+        self._save_benchmark(benchmark_id, data)
+        return data
+
+    def update_staked(
+        self, benchmark_id: str, current_price: float
+    ) -> dict | None:
+        """Update a staked asset benchmark (e.g. staked ETH).
+
+        Compounds staking rewards on the underlying asset and values at
+        current market price. Captures both staking yield and price exposure.
+
+        Args:
+            benchmark_id: Benchmark identifier (e.g. "staked_eth").
+            current_price: Current USD price of the underlying asset.
+
+        Returns:
+            Updated benchmark dict, or None if not found.
+        """
+        data = self._get_benchmark(benchmark_id)
+        if data is None:
+            return None
+
+        seed_capital = data["seed_capital"]
+        staking_apy = data.get("staking_apy", 0.032)
+
+        # Set initial price on first call
+        if data.get("initial_price") is None:
+            data["initial_price"] = current_price
+            data["initial_units"] = seed_capital / current_price
+
+        initial_units = data["initial_units"]
+
+        # Calculate staking reward: compound units over time
+        history = data.get("history", [])
+        if history:
+            first_ts = datetime.fromisoformat(history[0]["timestamp"])
+        else:
+            first_ts = datetime.now(timezone.utc)
+
+        days_elapsed = (datetime.now(timezone.utc) - first_ts).total_seconds() / 86400
+        current_units = initial_units * ((1 + staking_apy) ** (days_elapsed / 365))
+        current_value = current_units * current_price
+
+        data["current_units"] = current_units
+        data["current_value"] = current_value
+
+        self._append_history(data, current_value)
+        self._save_benchmark(benchmark_id, data)
         return data
 
     # ------------------------------------------------------------------

@@ -85,9 +85,9 @@ Prior-art check (graveyard + relevant history — has this been tried?)
     ↓
 Formulate (hypothesis + counterfactual + success criteria)
     ↓
-Code (write the BaseStrategy subclass in the `code` field of the hypothesis JSON — see format below)
+Code (call the `write_strategy_code` tool with the strategy_id and full BaseStrategy code)
     ↓
-Queue (submit via new_hypotheses in JSON output)
+Queue (submit via new_hypotheses in JSON output — code is written separately via the tool)
 ```
 
 With tools, you can often complete this pipeline in a single cycle — call `run_analysis` to check correlations, call `query_memory` to verify you haven't tried this before, then submit the hypothesis. But don't rush. If the data isn't conclusive, emit a research note and return to it next cycle.
@@ -219,12 +219,11 @@ Forward progression only. Demotion (live → paper) permitted. Any stage can ter
     "implementation": "how to calculate it",
     "null_hypothesis": "if strategy does not beat this, thesis is wrong"
   },
-  "failure_modes": ["conditions that would falsify the thesis"],
-  "code": "import math\nfrom strategies.base import BaseStrategy, Signal\n\nclass MyStrategy(BaseStrategy):\n    def __init__(self, **kwargs): ...\n    def name(self) -> str: return 'my_strategy'\n    def required_feeds(self) -> list[str]: return ['BTC/USD:4h']\n    def on_data(self, data: dict) -> list[Signal]:\n        candles = data.get('candles_so_far', [])\n        # ... signal logic returning list[Signal] ...\n        return []"
+  "failure_modes": ["conditions that would falsify the thesis"]
 }
 ```
 
-**`code` is required.** Write a complete Python string (JSON-escaped) implementing `BaseStrategy`. The class must define `name()`, `required_feeds()`, and `on_data(data)`. This code is written verbatim to `strategies/hypotheses/{strategy_id}.py` and loaded by the backtest runner. If omitted, the backtest cannot run.
+**Strategy code is required.** After emitting the hypothesis JSON, call the `write_strategy_code` tool with `strategy_id` and a complete Python implementation of `BaseStrategy`. This keeps your JSON response lean while writing the code to `strategies/hypotheses/{strategy_id}.py`. The code must define `name()`, `required_feeds()`, and `on_data(data)`. If you cannot call the tool (e.g. tool limit reached), you may include a `"code"` field in the hypothesis JSON as a fallback — but prefer the tool.
 
 BaseStrategy interface (`strategies/base.py`):
 ```

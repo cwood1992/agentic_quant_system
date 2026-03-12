@@ -22,6 +22,7 @@ from logging_config import get_logger, setup_logging
 from state_generator import write_state_md
 from strategies.backtest_runner import BacktestRunner
 from strategies.base import BaseStrategy
+from strategies.registry import StrategyRegistry
 from wake_controller.controller import WakeController
 
 # Global shutdown state
@@ -76,28 +77,28 @@ def _get_latest_close(db_path: str, pair: str, timeframe: str = "1h") -> float |
         conn.close()
 
 
-def _update_registry(
+def _update_results(
     db_path: str,
     strategy_id: str,
     agent_id: str,
-    stage: str | None = None,
     backtest_results: str | None = None,
+    robustness_results: str | None = None,
 ) -> None:
-    """Update a strategy_registry row's stage and/or backtest_results."""
+    """Update result fields on a strategy_registry row (not stage — use StrategyRegistry for that)."""
     conn = get_db(db_path)
     now = datetime.now(timezone.utc).isoformat()
     try:
-        if stage is not None:
-            conn.execute(
-                "UPDATE strategy_registry SET stage=?, backtest_results=?, updated_at=? "
-                "WHERE strategy_id=? AND agent_id=?",
-                (stage, backtest_results, now, strategy_id, agent_id),
-            )
-        else:
+        if backtest_results is not None:
             conn.execute(
                 "UPDATE strategy_registry SET backtest_results=?, updated_at=? "
                 "WHERE strategy_id=? AND agent_id=?",
                 (backtest_results, now, strategy_id, agent_id),
+            )
+        if robustness_results is not None:
+            conn.execute(
+                "UPDATE strategy_registry SET robustness_results=?, updated_at=? "
+                "WHERE strategy_id=? AND agent_id=?",
+                (robustness_results, now, strategy_id, agent_id),
             )
         conn.commit()
     finally:
@@ -106,6 +107,7 @@ def _update_registry(
 
 def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
     """Find hypothesis-stage strategies with no backtest and run them."""
+    registry = StrategyRegistry(db_path)
     conn = get_db(db_path)
     try:
         rows = conn.execute(
@@ -123,8 +125,8 @@ def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
         hypothesis_config = _json.loads(config_json)
 
         # Mark in-progress so this hypothesis isn't picked up again on the next poll
-        _update_registry(db_path, strategy_id, agent_id,
-                         backtest_results='{"status":"running"}')
+        _update_results(db_path, strategy_id, agent_id,
+                        backtest_results='{"status":"running"}')
 
         # Dynamically load the strategy class.
         # Derive module path from strategy_id (strategies.hypotheses.<strategy_id>)
@@ -152,9 +154,12 @@ def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
 
         if strategy_class is None:
             logger.error("Cannot load strategy class for %s: %s", strategy_id, load_error)
-            _update_registry(db_path, strategy_id, agent_id,
-                             stage="graveyard",
-                             backtest_results=_json.dumps({"error": load_error}))
+            _update_results(db_path, strategy_id, agent_id,
+                            backtest_results=_json.dumps({"error": load_error}))
+            try:
+                registry.kill(strategy_id, f"Cannot load strategy class: {load_error}")
+            except Exception:
+                logger.warning("Failed to move %s to graveyard via registry", strategy_id)
             continue
 
         # Ensure pair and timeframe are set in config for the runner
@@ -174,15 +179,21 @@ def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
                 "Backtest passed for %s: %d trades, sharpe=%.2f",
                 strategy_id, results.get("trade_count", 0), results.get("sharpe_ratio", 0),
             )
-            _update_registry(db_path, strategy_id, agent_id,
-                             stage="backtest",
-                             backtest_results=_json.dumps(results))
+            try:
+                registry.advance(strategy_id, "backtest")
+            except Exception:
+                logger.warning("Failed to advance %s via registry", strategy_id)
+            _update_results(db_path, strategy_id, agent_id,
+                            backtest_results=_json.dumps(results))
         else:
             logger.warning("Backtest failed for %s: %s",
                            strategy_id, results.get("failure_reason"))
-            _update_registry(db_path, strategy_id, agent_id,
-                             stage="graveyard",
-                             backtest_results=_json.dumps(results))
+            _update_results(db_path, strategy_id, agent_id,
+                            backtest_results=_json.dumps(results))
+            try:
+                registry.kill(strategy_id, f"Backtest failed: {results.get('failure_reason')}")
+            except Exception:
+                logger.warning("Failed to move %s to graveyard via registry", strategy_id)
 
 
 def _run_backtest_loop(db_path: str, shutdown_event: threading.Event,
@@ -196,6 +207,120 @@ def _run_backtest_loop(db_path: str, shutdown_event: threading.Event,
         except Exception:
             logger.exception("Error in backtest loop")
     logger.info("Backtest runner thread stopped")
+
+
+# ---------------------------------------------------------------------------
+# Robustness testing helpers
+# ---------------------------------------------------------------------------
+
+# Pass thresholds — strategy must beat random entries at these percentiles
+ROBUSTNESS_SHARPE_THRESHOLD = 60.0
+ROBUSTNESS_RETURN_THRESHOLD = 60.0
+
+
+def _process_pending_robustness(db_path: str) -> None:
+    """Find backtest-stage strategies with no robustness results and test them."""
+    from strategies.robustness import random_entry_test, return_permutation_test
+
+    registry = StrategyRegistry(db_path)
+    conn = get_db(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM strategy_registry "
+            "WHERE stage='backtest' AND robustness_results IS NULL "
+            "AND backtest_results IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for row in rows:
+        strategy_id = row["strategy_id"]
+        agent_id = row["agent_id"]
+        backtest_json = row["backtest_results"] or "{}"
+        backtest = _json.loads(backtest_json)
+
+        # Skip strategies whose backtest didn't succeed
+        if not backtest.get("success"):
+            continue
+
+        trades = backtest.get("trades", [])
+        if len(trades) < 8:
+            continue
+
+        logger.info("Running robustness tests for %s (%d trades)", strategy_id, len(trades))
+
+        # Load candle data for random entry test
+        config_json = row["config"] or "{}"
+        hyp_config = _json.loads(config_json)
+        pair = hyp_config.get("pair", "BTC/USD")
+        timeframe = hyp_config.get("timeframe", "4h")
+        if "pair" not in hyp_config:
+            target_pairs = hyp_config.get("target_pairs", ["BTC/USD"])
+            pair = target_pairs[0] if target_pairs else "BTC/USD"
+
+        runner = BacktestRunner(db_path)
+        candles = runner._load_candles(pair, timeframe, lookback_days=180)
+
+        # Run random entry test
+        random_result = random_entry_test(
+            strategy_class=None,  # Not used in simplified version
+            data=candles,
+            original_trades=trades,
+        )
+
+        # Run return permutation test
+        trade_returns = [t["return_pct"] for t in trades]
+        starting_capital = backtest.get("starting_capital", 10000.0)
+        perm_result = return_permutation_test(
+            trade_returns=trade_returns,
+            starting_capital=starting_capital,
+        )
+
+        combined = {
+            "random_entry": random_result,
+            "return_permutation": perm_result,
+        }
+
+        # Check pass criteria
+        sharpe_pct = random_result.get("sharpe_percentile", 0)
+        return_pct = random_result.get("total_return_percentile", 0)
+        passed = (
+            sharpe_pct >= ROBUSTNESS_SHARPE_THRESHOLD
+            and return_pct >= ROBUSTNESS_RETURN_THRESHOLD
+        )
+        combined["passed"] = passed
+
+        if passed:
+            logger.info(
+                "Robustness PASSED for %s: sharpe_pct=%.1f, return_pct=%.1f",
+                strategy_id, sharpe_pct, return_pct,
+            )
+            try:
+                registry.advance(strategy_id, "robustness")
+            except Exception:
+                logger.warning("Failed to advance %s via registry", strategy_id)
+        else:
+            logger.info(
+                "Robustness FAILED for %s: sharpe_pct=%.1f, return_pct=%.1f "
+                "(keeping at backtest stage for agent review)",
+                strategy_id, sharpe_pct, return_pct,
+            )
+            # No stage change — stays in backtest for agent to review/tweak
+
+        _update_results(db_path, strategy_id, agent_id,
+                        robustness_results=_json.dumps(combined))
+
+
+def _run_robustness_loop(db_path: str, shutdown_event: threading.Event,
+                         poll_interval: int = 120) -> None:
+    """Background thread: poll for backtest-stage strategies and run robustness tests."""
+    logger.info("Robustness tester thread started (poll every %ds)", poll_interval)
+    while not shutdown_event.wait(timeout=poll_interval):
+        try:
+            _process_pending_robustness(db_path)
+        except Exception:
+            logger.exception("Error in robustness loop")
+    logger.info("Robustness tester thread stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +355,11 @@ def _run_benchmark_loop(tracker: BenchmarkTracker, db_path: str,
                 tracker.update_dca("dca_btc", btc_price, elapsed)
             if eth_price:
                 tracker.update_hodl("hodl_eth", eth_price)
+                tracker.update_staked("staked_eth", eth_price)
             if btc_price and eth_price:
                 tracker.update_equal_weight("equal_weight_rebal", btc_price, eth_price)
+            # Yield benchmarks don't need price data
+            tracker.update_yield("usdc_yield")
         except Exception:
             logger.exception("Error in benchmark update loop")
     logger.info("Benchmark tracker thread stopped")
@@ -259,6 +387,20 @@ def main():
     db_path = config.get("system", {}).get("db_path", "data/system.db")
     create_all_tables(db_path)
     logger.info("Database tables initialised at %s", db_path)
+
+    # Log system_start event so agents can detect restarts
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn = get_db(db_path)
+        conn.execute(
+            "INSERT INTO events (timestamp, event_type, agent_id, cycle, source, payload) "
+            "VALUES (?, 'system_start', 'system', 0, 'main', ?)",
+            (now, _json.dumps({"reason": "process_start"})),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        logger.warning("Failed to log system_start event")
 
     # --- 4b. Seed benchmarks ---
     benchmark_tracker = BenchmarkTracker(db_path)
@@ -302,6 +444,16 @@ def main():
     )
     backtest_thread.start()
     logger.info("Backtest runner thread started")
+
+    # --- 6b2. Start robustness tester thread ---
+    robustness_thread = threading.Thread(
+        target=_run_robustness_loop,
+        args=(db_path, shutdown_event),
+        name="RobustnessTester",
+        daemon=True,
+    )
+    robustness_thread.start()
+    logger.info("Robustness tester thread started")
 
     # --- 6c. Start benchmark tracker thread ---
     benchmark_thread = threading.Thread(
@@ -391,6 +543,12 @@ def main():
         logger.warning("Backtest runner thread did not stop within timeout")
     else:
         logger.info("Backtest runner thread stopped")
+
+    robustness_thread.join(timeout=30)
+    if robustness_thread.is_alive():
+        logger.warning("Robustness tester thread did not stop within timeout")
+    else:
+        logger.info("Robustness tester thread stopped")
 
     benchmark_thread.join(timeout=10)
     if benchmark_thread.is_alive():

@@ -989,13 +989,45 @@ class DigestBuilder:
             finally:
                 conn.close()
 
-        # Build header
+        # Build header with restart awareness
+        restart_info = ""
+        try:
+            conn_restart = get_db(self.db_path)
+            # Get last cycle_complete timestamp for this agent
+            last_complete = conn_restart.execute(
+                "SELECT timestamp FROM events WHERE agent_id = ? "
+                "AND event_type = 'cycle_complete' ORDER BY timestamp DESC LIMIT 1",
+                (agent_id,),
+            ).fetchone()
+
+            if last_complete:
+                last_ts = last_complete["timestamp"]
+                # Check for system_start events since last cycle
+                restarts = conn_restart.execute(
+                    "SELECT timestamp FROM events WHERE event_type = 'system_start' "
+                    "AND timestamp > ? ORDER BY timestamp DESC",
+                    (last_ts,),
+                ).fetchall()
+                if restarts:
+                    last_dt = datetime.fromisoformat(last_ts)
+                    gap = datetime.now(timezone.utc) - last_dt
+                    gap_hours = gap.total_seconds() / 3600
+                    restart_info = (
+                        f"\nSystem restarted since last cycle "
+                        f"({len(restarts)} restart(s)). "
+                        f"Time since last cycle: {gap_hours:.1f}h."
+                    )
+            conn_restart.close()
+        except Exception:
+            pass
+
         header = (
             f"=== AGENTIC QUANT DIGEST ===\n"
             f"Agent: {agent_id} | Cycle: {cycle_number} | {now}\n"
             f"Capital allocated: ${capital_allocated:.2f} "
             f"({cap_pct * 100:.0f}% of ${total_capital:.2f})\n"
             f"Wake reason: {wake_reason}"
+            f"{restart_info}"
         )
 
         # Build current conditions context for memory retrieval

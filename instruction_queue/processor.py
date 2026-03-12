@@ -18,6 +18,7 @@ from typing import Optional
 
 from database.schema import get_db
 from logging_config import get_logger
+from strategies.registry import StrategyRegistry
 from risk.portfolio import check_and_approve
 from strategies.base import Signal
 
@@ -282,14 +283,14 @@ def _execute_strategy_action(
 
         current_stage = row["stage"]
 
+        registry = StrategyRegistry(db_path)
+
         if action == "promote":
             new_stage = target_stage or _next_stage(current_stage)
-            conn.execute(
-                "UPDATE strategy_registry SET stage = ?, updated_at = ? "
-                "WHERE strategy_id = ? AND agent_id = ?",
-                (new_stage, now, strategy_id, agent_id),
-            )
-            conn.commit()
+            try:
+                registry.advance(strategy_id, new_stage)
+            except (ValueError, KeyError) as exc:
+                return {"error": str(exc)}
             result = {
                 "action": "promote",
                 "strategy_id": strategy_id,
@@ -299,12 +300,22 @@ def _execute_strategy_action(
 
         elif action == "demote":
             new_stage = target_stage or _prev_stage(current_stage)
-            conn.execute(
-                "UPDATE strategy_registry SET stage = ?, updated_at = ? "
-                "WHERE strategy_id = ? AND agent_id = ?",
-                (new_stage, now, strategy_id, agent_id),
-            )
-            conn.commit()
+            if current_stage == "live":
+                reason = payload.get("reason", "agent_demote")
+                try:
+                    registry.demote(strategy_id, reason)
+                except (ValueError, KeyError) as exc:
+                    return {"error": str(exc)}
+            else:
+                # Registry.demote() only supports live→paper; for other demotions
+                # use direct SQL + manual file move
+                conn.execute(
+                    "UPDATE strategy_registry SET stage = ?, updated_at = ? "
+                    "WHERE strategy_id = ? AND agent_id = ?",
+                    (new_stage, now, strategy_id, agent_id),
+                )
+                conn.commit()
+                registry._move_strategy_files(strategy_id, current_stage, new_stage)
             result = {
                 "action": "demote",
                 "strategy_id": strategy_id,
@@ -313,12 +324,11 @@ def _execute_strategy_action(
             }
 
         elif action == "kill":
-            conn.execute(
-                "UPDATE strategy_registry SET stage = ?, updated_at = ? "
-                "WHERE strategy_id = ? AND agent_id = ?",
-                ("graveyard", now, strategy_id, agent_id),
-            )
-            conn.commit()
+            reason = payload.get("reason", "agent_kill")
+            try:
+                registry.kill(strategy_id, reason)
+            except KeyError as exc:
+                return {"error": str(exc)}
             result = {
                 "action": "kill",
                 "strategy_id": strategy_id,

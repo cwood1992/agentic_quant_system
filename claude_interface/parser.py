@@ -161,7 +161,10 @@ def _dispatch_new_hypotheses(
 
     for hyp in hypotheses:
         hypothesis_id = hyp.get("hypothesis_id") or hyp.get("id") or str(uuid.uuid4())[:8]
-        strategy_id = f"{namespace}_{hypothesis_id}"
+        if hypothesis_id.startswith(f"{namespace}_"):
+            strategy_id = hypothesis_id
+        else:
+            strategy_id = f"{namespace}_{hypothesis_id}"
 
         # Extract code before storing config — keep DB slim
         code = hyp.get("code", "").strip()

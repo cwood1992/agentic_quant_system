@@ -142,7 +142,19 @@ class WakeController:
         }
 
         if agent_id not in self._cycle_counts:
-            self._cycle_counts[agent_id] = 0
+            # Resume from last recorded cycle number so counter persists across restarts
+            try:
+                conn = get_db(self.db_path)
+                row = conn.execute(
+                    "SELECT MAX(cycle) as max_cycle FROM events WHERE agent_id = ?",
+                    (agent_id,),
+                ).fetchone()
+                conn.close()
+                self._cycle_counts[agent_id] = (
+                    row["max_cycle"] if row and row["max_cycle"] else 0
+                )
+            except Exception:
+                self._cycle_counts[agent_id] = 0
 
         logger.info(
             "Scheduled agent %s: base=%.1fh effective=%.1fh",
@@ -187,9 +199,14 @@ class WakeController:
         self._cycle_counts[agent_id] = self._cycle_counts.get(agent_id, 0) + 1
         cycle_number = self._cycle_counts[agent_id]
 
+        # Compute capital_allocated from live portfolio balance
+        portfolio_value = self._get_portfolio_value()
+        cap_pct = agent_cfg.get("capital_allocation_pct", 1.0)
+        agent_cfg["capital_allocated"] = portfolio_value * cap_pct
+
         logger.info(
-            "Waking agent %s (cycle %d, reason: %s)",
-            agent_id, cycle_number, wake_reason,
+            "Waking agent %s (cycle %d, reason: %s, capital: $%.2f)",
+            agent_id, cycle_number, wake_reason, agent_cfg["capital_allocated"],
         )
 
         try:
@@ -208,7 +225,6 @@ class WakeController:
 
         # Process any instructions the agent queued this cycle
         try:
-            portfolio_value = self._get_portfolio_value()
             results = process_pending_instructions(
                 db_path=self.db_path,
                 portfolio_value=portfolio_value,
@@ -379,12 +395,54 @@ class WakeController:
             )
 
     def _get_portfolio_value(self) -> float:
-        """Return current portfolio USD value from exchange balance, or 0 on failure."""
+        """Return current portfolio USD value from exchange balance.
+
+        Caches the last known value in system_state so that if the exchange
+        is temporarily unreachable, the agent still sees a reasonable capital
+        figure instead of $0.
+        """
         try:
             balance = self.exchange.fetch_balance()
-            return float(balance.get("total", {}).get("USD", 0.0))
+            totals = balance.get("total", {})
+            value = sum(
+                float(totals.get(sym, 0.0) or 0.0)
+                for sym in ("USD", "USDC", "USDT")
+            )
+            if value > 0:
+                self._cache_portfolio_value(value)
+            return value
         except Exception:
-            return 0.0
+            logger.warning("Exchange balance fetch failed, using cached value")
+            return self._get_cached_portfolio_value()
+
+    def _cache_portfolio_value(self, value: float) -> None:
+        """Store portfolio value in system_state for fallback."""
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            conn = get_db(self.db_path)
+            conn.execute(
+                """INSERT OR REPLACE INTO system_state (key, value, updated_at)
+                   VALUES ('portfolio_value_usd', ?, ?)""",
+                (json.dumps(value), now),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    def _get_cached_portfolio_value(self) -> float:
+        """Retrieve last known portfolio value from system_state."""
+        try:
+            conn = get_db(self.db_path)
+            row = conn.execute(
+                "SELECT value FROM system_state WHERE key = 'portfolio_value_usd'",
+            ).fetchone()
+            conn.close()
+            if row:
+                return float(json.loads(row["value"]))
+        except Exception:
+            pass
+        return 0.0
 
     def _get_current_conditions(self) -> dict:
         """Gather current market/system conditions for modifier evaluation.

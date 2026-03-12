@@ -123,7 +123,8 @@ class AnalysisEngine:
         pair: str,
         timeframe: str,
         lookback_days: int = 30,
-        window: int = 24,
+        window: int | None = None,
+        window_days: int = 14,
     ) -> dict:
         """Compute rolling Sharpe ratio over a window.
 
@@ -134,11 +135,16 @@ class AnalysisEngine:
             pair: Trading pair.
             timeframe: OHLCV timeframe.
             lookback_days: Days of data to use.
-            window: Rolling window size in number of candles.
+            window: Rolling window size in candles (overrides window_days).
+            window_days: Rolling window size in days (default 14).
 
         Returns:
             Dict with keys: pair, window, values (list of floats), count.
         """
+        if window is None:
+            annualisation = self._annualisation_factor(timeframe)
+            candles_per_day = annualisation / 365
+            window = max(2, int(window_days * candles_per_day))
         returns = self._load_returns(pair, timeframe, lookback_days)
         if len(returns) < window:
             return {
@@ -223,8 +229,8 @@ class AnalysisEngine:
                     str(int(lag)): round(float(pval), 6)
                     for lag, pval in lb["lb_pvalue"].items()
                 }
-        except Exception:
-            pass  # statsmodels unavailable or insufficient data
+        except Exception as exc:
+            logger.warning("Ljung-Box test failed: %s", exc)
 
         return {
             "pair": pair,
@@ -370,8 +376,8 @@ class AnalysisEngine:
             adf_result = adfuller(residuals, autolag="AIC")
             adf_statistic = round(float(adf_result[0]), 6)
             adf_pvalue = round(float(adf_result[1]), 6)
-        except Exception:
-            pass  # statsmodels unavailable
+        except Exception as exc:
+            logger.warning("ADF test failed: %s", exc)
 
         return {
             "pair_a": pairs[0],

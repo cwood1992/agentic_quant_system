@@ -94,13 +94,13 @@ def generate_state_md(db_path: str, config: dict) -> str:
         # Status — check if paused via system_state
         agent_status = _get_agent_status(conn, agent_id)
 
-        # Current cycle number (count cycle_start events)
+        # Current cycle number (highest recorded cycle number)
         cycle_row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM events "
-            "WHERE agent_id = ? AND event_type = 'cycle_start'",
+            "SELECT MAX(cycle) as max_cycle FROM events "
+            "WHERE agent_id = ?",
             (agent_id,),
         ).fetchone()
-        cycle_count = cycle_row["cnt"] if cycle_row else 0
+        cycle_count = cycle_row["max_cycle"] if cycle_row and cycle_row["max_cycle"] else 0
 
         # Capital allocated
         capital = agent_cfg.get("capital_allocated", 0.0)

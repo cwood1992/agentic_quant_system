@@ -14,7 +14,7 @@ claude:
   api_key: ${ANTHROPIC_API_KEY}
   default_model: claude-sonnet-4-6
   escalation_model: claude-opus-4-6
-  max_output_tokens: 8000
+  max_output_tokens: 16000
   max_tool_iterations: 5
   max_monthly_api_budget_usd: 50
 
@@ -39,6 +39,7 @@ agents:
       - run_analysis
       - query_memory
       - check_backtest_status
+      - write_strategy_code
     max_positions: 5
     enabled: true
 

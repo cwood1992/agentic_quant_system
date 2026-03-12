@@ -74,7 +74,31 @@ QUANT_TOOLS = COMMON_TOOLS + [
             },
             "required": ["hypothesis_id"],
         },
-    }
+    },
+    {
+        "name": "write_strategy_code",
+        "description": (
+            "Write a BaseStrategy subclass to a hypothesis file. Call this after "
+            "emitting the hypothesis JSON (without inline code) to write the strategy "
+            "implementation separately. The code is validated with compile() before "
+            "writing. Use this instead of putting code in the hypothesis JSON to keep "
+            "your response lean."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "strategy_id": {
+                    "type": "string",
+                    "description": "The strategy_id matching the hypothesis (e.g. 'quant_primary_hyp_001_btc_momentum')",
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Full Python source code for a BaseStrategy subclass. Must include imports.",
+                },
+            },
+            "required": ["strategy_id", "code"],
+        },
+    },
 ]
 
 RISK_TOOLS = COMMON_TOOLS + [
