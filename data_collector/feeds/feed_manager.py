@@ -204,7 +204,7 @@ class FeedManager:
 
             conn.execute(
                 """
-                INSERT INTO supplementary_feeds
+                INSERT OR IGNORE INTO supplementary_feeds
                     (feed_name, timestamp, value, metadata, source, resolution)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,

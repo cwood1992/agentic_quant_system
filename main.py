@@ -105,7 +105,9 @@ def _update_results(
         conn.close()
 
 
-def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
+def _process_pending_backtests(
+    runner: BacktestRunner, db_path: str, default_capital: float = 500.0
+) -> None:
     """Find hypothesis-stage strategies with no backtest and run them."""
     registry = StrategyRegistry(db_path)
     conn = get_db(db_path)
@@ -123,6 +125,10 @@ def _process_pending_backtests(runner: BacktestRunner, db_path: str) -> None:
         namespace = row["namespace"]
         config_json = row["config"] or "{}"
         hypothesis_config = _json.loads(config_json)
+
+        # Use agent's actual capital as default instead of hardcoded $10K
+        if "starting_capital" not in hypothesis_config:
+            hypothesis_config["starting_capital"] = default_capital
 
         # Mark in-progress so this hypothesis isn't picked up again on the next poll
         _update_results(db_path, strategy_id, agent_id,
@@ -203,7 +209,21 @@ def _run_backtest_loop(db_path: str, shutdown_event: threading.Event,
     logger.info("Backtest runner thread started (poll every %ds)", poll_interval)
     while not shutdown_event.wait(timeout=poll_interval):
         try:
-            _process_pending_backtests(runner, db_path)
+            # Read cached portfolio value for realistic default capital
+            default_capital = 500.0
+            try:
+                conn = get_db(db_path)
+                row = conn.execute(
+                    "SELECT value FROM system_state WHERE key = 'portfolio_value_usd'"
+                ).fetchone()
+                conn.close()
+                if row:
+                    val = float(_json.loads(row["value"]))
+                    if val > 0:
+                        default_capital = val
+            except Exception:
+                pass
+            _process_pending_backtests(runner, db_path, default_capital)
         except Exception:
             logger.exception("Error in backtest loop")
     logger.info("Backtest runner thread stopped")
@@ -345,21 +365,34 @@ def _run_benchmark_loop(tracker: BenchmarkTracker, db_path: str,
                         poll_interval: int = 900) -> None:
     """Background thread: update benchmark values from latest OHLCV prices."""
     logger.info("Benchmark tracker thread started (poll every %ds)", poll_interval)
+
+    def _do_update():
+        btc_price = _get_latest_close(db_path, "BTC/USD")
+        eth_price = _get_latest_close(db_path, "ETH/USD")
+        if btc_price:
+            tracker.update_hodl("hodl_btc", btc_price)
+            elapsed = _elapsed_weeks(tracker, "dca_btc")
+            tracker.update_dca("dca_btc", btc_price, elapsed)
+        if eth_price:
+            tracker.update_hodl("hodl_eth", eth_price)
+            tracker.update_staked("staked_eth", eth_price)
+        if btc_price and eth_price:
+            tracker.update_equal_weight("equal_weight_rebal", btc_price, eth_price)
+        # Yield benchmarks don't need price data
+        tracker.update_yield("usdc_yield")
+
+    # Brief wait for OHLCV collector to populate initial data, then run
+    # an immediate update so benchmarks are available before the first wake.
+    shutdown_event.wait(timeout=30)
+    if not shutdown_event.is_set():
+        try:
+            _do_update()
+        except Exception:
+            logger.exception("Error in initial benchmark update")
+
     while not shutdown_event.wait(timeout=poll_interval):
         try:
-            btc_price = _get_latest_close(db_path, "BTC/USD")
-            eth_price = _get_latest_close(db_path, "ETH/USD")
-            if btc_price:
-                tracker.update_hodl("hodl_btc", btc_price)
-                elapsed = _elapsed_weeks(tracker, "dca_btc")
-                tracker.update_dca("dca_btc", btc_price, elapsed)
-            if eth_price:
-                tracker.update_hodl("hodl_eth", eth_price)
-                tracker.update_staked("staked_eth", eth_price)
-            if btc_price and eth_price:
-                tracker.update_equal_weight("equal_weight_rebal", btc_price, eth_price)
-            # Yield benchmarks don't need price data
-            tracker.update_yield("usdc_yield")
+            _do_update()
         except Exception:
             logger.exception("Error in benchmark update loop")
     logger.info("Benchmark tracker thread stopped")
@@ -401,6 +434,39 @@ def main():
         conn.close()
     except Exception:
         logger.warning("Failed to log system_start event")
+
+    # --- 4a. Resolve pending owner requests and SIRs ---
+    try:
+        conn = get_db(db_path)
+        # Owner request: Kraken margin not available (US requirements)
+        conn.execute(
+            "UPDATE owner_requests SET status = 'resolved', resolved_at = ?, "
+            "resolution_note = 'Kraken margin trading is NOT available — US "
+            "regulatory requirements. Strategies must be reformulated as "
+            "long-only or use synthetic alternatives.' "
+            "WHERE request_id = 'owner_req_001_kraken_margin' AND status = 'pending'",
+            (now,),
+        )
+        # Mark shipped SIRs
+        sir_updates = [
+            ("sir_003", "Benchmarks now update immediately on startup"),
+            ("sir_016", "F&G feed now fetches 90 days of history"),
+            ("sir_017", "Duplicate feed records eliminated via UNIQUE constraint"),
+            ("sir_018", "Cointegration spread z-scores pre-computed in digest"),
+            ("sir_019", "F&G feed now fetches 90 days of history"),
+        ]
+        for sir_id, note in sir_updates:
+            conn.execute(
+                "UPDATE system_improvement_requests "
+                "SET status = 'shipped', shipped_at = ?, status_note = ? "
+                "WHERE request_id LIKE ? AND status != 'shipped'",
+                (now, note, f"%{sir_id}%"),
+            )
+        conn.commit()
+        conn.close()
+        logger.info("Resolved owner requests and marked SIRs as shipped")
+    except Exception:
+        logger.warning("Failed to update owner requests / SIR statuses")
 
     # --- 4b. Seed benchmarks ---
     benchmark_tracker = BenchmarkTracker(db_path)

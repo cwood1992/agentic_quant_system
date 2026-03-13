@@ -20,6 +20,10 @@ logger = get_logger("claude_interface.parser")
 # Maximum system_improvement_requests an agent can submit per cycle
 MAX_IMPROVEMENT_REQUESTS_PER_CYCLE = 3
 
+# Research note limits
+MAX_RESEARCH_NOTES = 12
+RESEARCH_NOTE_EXPIRY_CYCLES = 10
+
 
 def parse_agent_output(
     raw_text: str,
@@ -235,13 +239,36 @@ def _dispatch_research_notes(
             (note_id, agent_id),
         ).fetchone()
 
+        # Detect versioned notes (e.g. rn_005_v2) and auto-close prior versions
+        inherited_age = 0
+        version_match = re.match(r'^(.+?)_v(\d+)$', note_id)
+        if version_match and not existing:
+            base_id = version_match.group(1)
+            version_num = int(version_match.group(2))
+            # Build list of prior version note_ids
+            prior_ids = [base_id] + [f"{base_id}_v{v}" for v in range(2, version_num)]
+            for prior_id in prior_ids:
+                prior_row = conn.execute(
+                    "SELECT age_cycles FROM research_notes "
+                    "WHERE note_id = ? AND agent_id = ? AND status NOT IN ('promoted', 'abandoned')",
+                    (prior_id, agent_id),
+                ).fetchone()
+                if prior_row:
+                    inherited_age = max(inherited_age, prior_row["age_cycles"])
+                    conn.execute(
+                        "UPDATE research_notes SET status = 'abandoned' "
+                        "WHERE note_id = ? AND agent_id = ?",
+                        (prior_id, agent_id),
+                    )
+                    logger.info("Auto-closed superseded note %s (replaced by %s)", prior_id, note_id)
+
         if existing:
-            # Update existing note
+            # Update existing note (age_cycles managed globally, not here)
             conn.execute(
                 """UPDATE research_notes
                    SET cycle = ?, observation = ?, potential_edge = ?,
                        questions = ?, requested_data = ?,
-                       status = ?, age_cycles = age_cycles + 1
+                       status = ?
                    WHERE note_id = ? AND agent_id = ?""",
                 (
                     cycle,
@@ -255,12 +282,25 @@ def _dispatch_research_notes(
                 ),
             )
         else:
-            # Insert new note
+            # Enforce note cap before inserting
+            active_count = conn.execute(
+                "SELECT COUNT(*) as cnt FROM research_notes "
+                "WHERE agent_id = ? AND status NOT IN ('promoted', 'abandoned')",
+                (agent_id,),
+            ).fetchone()["cnt"]
+            if active_count >= MAX_RESEARCH_NOTES:
+                logger.warning(
+                    "Agent %s at research note cap (%d/%d), rejecting note %s",
+                    agent_id, active_count, MAX_RESEARCH_NOTES, note_id,
+                )
+                continue
+
+            # Insert new note (inherit age from superseded parent if versioned)
             conn.execute(
                 """INSERT INTO research_notes
                    (note_id, agent_id, cycle, created_at, observation,
                     potential_edge, questions, requested_data, status, age_cycles)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     note_id,
                     agent_id,
@@ -271,6 +311,7 @@ def _dispatch_research_notes(
                     json.dumps(note.get("questions_to_resolve", note.get("questions", []))),
                     json.dumps(note.get("requested_data", [])),
                     note.get("status", "active"),
+                    inherited_age,
                 ),
             )
     logger.info(
@@ -582,3 +623,55 @@ def _dispatch_cycle_notes(
         (now, agent_id, cycle, json.dumps({"cycle_notes": notes})),
     )
     logger.info("Logged cycle_notes for agent %s cycle %d", agent_id, cycle)
+
+
+# ------------------------------------------------------------------
+# Research note lifecycle helpers (called from cycle.py)
+# ------------------------------------------------------------------
+
+def age_research_notes(db_path: str, agent_id: str) -> int:
+    """Increment age_cycles by 1 for all active research notes.
+
+    Called at the start of each cycle before building the digest so that
+    every note ages even if the agent doesn't mention it.
+
+    Returns:
+        Number of notes aged.
+    """
+    conn = get_db(db_path)
+    try:
+        cursor = conn.execute(
+            """UPDATE research_notes
+               SET age_cycles = age_cycles + 1
+               WHERE agent_id = ?
+                 AND status NOT IN ('promoted', 'abandoned')""",
+            (agent_id,),
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def expire_old_research_notes(db_path: str, agent_id: str) -> int:
+    """Auto-abandon research notes that have aged past the expiry threshold.
+
+    Also abandons notes whose observation contains 'invalidated'.
+
+    Returns:
+        Number of notes expired.
+    """
+    conn = get_db(db_path)
+    try:
+        cursor = conn.execute(
+            """UPDATE research_notes
+               SET status = 'abandoned'
+               WHERE agent_id = ?
+                 AND status NOT IN ('promoted', 'abandoned')
+                 AND (age_cycles >= ? OR observation LIKE '%invalidated%')""",
+            (agent_id, RESEARCH_NOTE_EXPIRY_CYCLES),
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()

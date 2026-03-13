@@ -204,6 +204,14 @@ class WakeController:
         cap_pct = agent_cfg.get("capital_allocation_pct", 1.0)
         agent_cfg["capital_allocated"] = portfolio_value * cap_pct
 
+        # Keep high-water mark in sync with portfolio value
+        if portfolio_value > 0:
+            from risk.portfolio import update_high_water_mark
+            try:
+                update_high_water_mark(self.db_path, portfolio_value)
+            except Exception:
+                logger.warning("Failed to update high-water mark")
+
         logger.info(
             "Waking agent %s (cycle %d, reason: %s, capital: $%.2f)",
             agent_id, cycle_number, wake_reason, agent_cfg["capital_allocated"],
@@ -397,17 +405,14 @@ class WakeController:
     def _get_portfolio_value(self) -> float:
         """Return current portfolio USD value from exchange balance.
 
+        Uses get_total_equity() to convert ALL holdings to USD at spot prices.
         Caches the last known value in system_state so that if the exchange
         is temporarily unreachable, the agent still sees a reasonable capital
         figure instead of $0.
         """
         try:
-            balance = self.exchange.fetch_balance()
-            totals = balance.get("total", {})
-            value = sum(
-                float(totals.get(sym, 0.0) or 0.0)
-                for sym in ("USD", "USDC", "USDT")
-            )
+            from exchange.connector import get_total_equity
+            value = get_total_equity(self.exchange)
             if value > 0:
                 self._cache_portfolio_value(value)
             return value
@@ -416,7 +421,12 @@ class WakeController:
             return self._get_cached_portfolio_value()
 
     def _cache_portfolio_value(self, value: float) -> None:
-        """Store portfolio value in system_state for fallback."""
+        """Store portfolio value in system_state for fallback.
+
+        Writes both ``portfolio_value_usd`` (raw float) and ``total_equity``
+        (``{"amount": value}`` dict) so that state_generator and risk gate
+        can both find the current equity.
+        """
         try:
             now = datetime.now(timezone.utc).isoformat()
             conn = get_db(self.db_path)
@@ -424,6 +434,11 @@ class WakeController:
                 """INSERT OR REPLACE INTO system_state (key, value, updated_at)
                    VALUES ('portfolio_value_usd', ?, ?)""",
                 (json.dumps(value), now),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO system_state (key, value, updated_at)
+                   VALUES ('total_equity', ?, ?)""",
+                (json.dumps({"amount": value}), now),
             )
             conn.commit()
             conn.close()

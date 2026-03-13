@@ -78,6 +78,18 @@ class DigestBuilder:
         try:
             role = self.agent_config.get("role", "quant")
 
+            # Read cached total equity for the summary line
+            total_equity = 0.0
+            eq_row = conn.execute(
+                "SELECT value FROM system_state WHERE key = 'portfolio_value_usd'"
+            ).fetchone()
+            if eq_row:
+                try:
+                    total_equity = float(json.loads(eq_row["value"]))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+            capital_allocated = self.agent_config.get("capital_allocated", 0.0)
+
             if role == "portfolio_manager":
                 # PM sees all positions
                 rows = conn.execute(
@@ -121,8 +133,14 @@ class DigestBuilder:
                     (agent_id,),
                 ).fetchall()
 
+            equity_line = (
+                f"Total equity: ${total_equity:,.2f} | "
+                f"Agent capital: ${capital_allocated:,.2f}"
+            )
+
             if not rows:
-                return self._collapse_if_empty("PORTFOLIO STATE", "")
+                content = f"{equity_line}\nOpen positions: 0 (all cash)"
+                return self._collapse_if_empty("PORTFOLIO STATE", content)
 
             lines = []
             total_exposure = 0.0
@@ -140,7 +158,7 @@ class DigestBuilder:
                 )
 
             summary = f"Open positions: {len(rows)} | Exposure: ${total_exposure:.2f} | Unrealized PnL: ${total_pnl:.2f}"
-            content = summary + "\n" + "\n".join(lines)
+            content = equity_line + "\n" + summary + "\n" + "\n".join(lines)
             return self._collapse_if_empty("PORTFOLIO STATE", content)
 
         finally:
@@ -312,7 +330,19 @@ class DigestBuilder:
                     (agent_id,),
                 ).fetchall()
 
+            from claude_interface.parser import MAX_RESEARCH_NOTES
+
             hyp_lines = []
+            if len(notes) >= MAX_RESEARCH_NOTES:
+                hyp_lines.append(
+                    f"  ** WARNING: Research note cap reached ({len(notes)}/{MAX_RESEARCH_NOTES}). "
+                    f"Abandon or promote notes before adding new ones. **"
+                )
+            elif len(notes) >= MAX_RESEARCH_NOTES - 2:
+                hyp_lines.append(
+                    f"  ** Note: {len(notes)}/{MAX_RESEARCH_NOTES} research notes active. "
+                    f"Consider consolidating. **"
+                )
             for n in notes:
                 expiry_warning = ""
                 if n["age_cycles"] >= 8:
@@ -324,13 +354,24 @@ class DigestBuilder:
                 )
             sections.append(self._collapse_if_empty("HYPOTHESIS QUEUE", "\n".join(hyp_lines)))
 
-            # Graveyard summary
+            # Graveyard summary — flag strategies killed during the $0 capital period
+            capital_fix_ts = None
+            cap_row = conn.execute(
+                "SELECT MIN(updated_at) as ts FROM system_state "
+                "WHERE key = 'portfolio_value_usd'"
+            ).fetchone()
+            if cap_row and cap_row["ts"]:
+                capital_fix_ts = cap_row["ts"]
+
             grave_lines = []
             for s in graveyard:
                 config_data = json.loads(s["config"]) if s["config"] else {}
                 reason = config_data.get("kill_reason", "unknown")
+                zero_cap_flag = ""
+                if capital_fix_ts and s["updated_at"] < capital_fix_ts:
+                    zero_cap_flag = " ** KILLED DURING $0 CAPITAL PERIOD — RE-EVALUATE **"
                 grave_lines.append(
-                    f"  {s['strategy_id']} | killed {s['updated_at']} | reason: {reason}"
+                    f"  {s['strategy_id']} | killed {s['updated_at']} | reason: {reason}{zero_cap_flag}"
                 )
             sections.append(self._collapse_if_empty("GRAVEYARD SUMMARY", "\n".join(grave_lines)))
 
@@ -430,6 +471,7 @@ class DigestBuilder:
                     GROUP BY feed_name
                 ) latest ON sf.feed_name = latest.feed_name
                     AND sf.timestamp = latest.max_ts
+                GROUP BY sf.feed_name
                 ORDER BY sf.feed_name
                 """
             ).fetchall()
@@ -950,7 +992,101 @@ class DigestBuilder:
         return self._collapse_if_empty("RELEVANT HISTORY", content)
 
     # ------------------------------------------------------------------
-    # 10. Full digest assembly
+    # 10. Requested analysis section (pre-computed z-scores)
+    # ------------------------------------------------------------------
+
+    def build_requested_analysis_section(self, agent_id: str) -> str:
+        """Pre-compute cointegration spread z-scores for active pair strategies.
+
+        Checks strategy_registry for non-graveyard strategies with exactly 2
+        target_pairs, runs a lightweight cointegration analysis, and returns
+        the current z-score so the agent doesn't burn a tool call each cycle.
+        """
+        try:
+            from data_collector.analysis import AnalysisEngine
+        except ImportError:
+            return self._collapse_if_empty("REQUESTED ANALYSIS", "")
+
+        conn = get_db(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT strategy_id, config FROM strategy_registry "
+                "WHERE agent_id = ? AND stage NOT IN ('graveyard') "
+                "AND config IS NOT NULL",
+                (agent_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            return self._collapse_if_empty("REQUESTED ANALYSIS", "")
+
+        engine = AnalysisEngine(self.db_path)
+        lines = []
+
+        for row in rows:
+            try:
+                config = json.loads(row["config"] or "{}")
+                target_pairs = config.get("target_pairs", [])
+                if len(target_pairs) != 2:
+                    continue
+
+                result = engine.cointegration(target_pairs, "4h", lookback_days=30)
+                if "error" in result:
+                    continue
+
+                hedge_ratio = result["hedge_ratio"]
+                intercept = result["intercept"]
+                residual_mean = result["residual_mean"]
+                residual_std = result["residual_std"]
+
+                if residual_std < 1e-8:
+                    continue
+
+                # Get latest close prices for both pairs
+                conn2 = get_db(self.db_path)
+                try:
+                    price_a = conn2.execute(
+                        "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                        "ORDER BY timestamp DESC LIMIT 1",
+                        (target_pairs[0],),
+                    ).fetchone()
+                    price_b = conn2.execute(
+                        "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                        "ORDER BY timestamp DESC LIMIT 1",
+                        (target_pairs[1],),
+                    ).fetchone()
+                finally:
+                    conn2.close()
+
+                if not price_a or not price_b:
+                    continue
+
+                pa = price_a["close"]
+                pb = price_b["close"]
+                current_spread = pa - (hedge_ratio * pb + intercept)
+                z_score = (current_spread - residual_mean) / residual_std
+
+                lines.append(
+                    f"  {target_pairs[0]} vs {target_pairs[1]} "
+                    f"({row['strategy_id']}): "
+                    f"z = {z_score:+.2f} | spread = {current_spread:.1f} "
+                    f"| mean = {residual_mean:.1f} | std = {residual_std:.1f} "
+                    f"| hedge = {hedge_ratio:.4f}"
+                )
+            except Exception as exc:
+                self.logger.debug(
+                    "Skipping z-score for %s: %s", row["strategy_id"], exc
+                )
+
+        if lines:
+            content = "Cointegration spread z-scores (pre-computed):\n" + "\n".join(lines)
+        else:
+            content = ""
+        return self._collapse_if_empty("REQUESTED ANALYSIS", content)
+
+    # ------------------------------------------------------------------
+    # 11. Full digest assembly
     # ------------------------------------------------------------------
 
     def build_full_digest(
@@ -1084,7 +1220,7 @@ class DigestBuilder:
             "",
             self.build_market_conditions(pairs),
             "",
-            self._collapse_if_empty("REQUESTED ANALYSIS", ""),
+            self.build_requested_analysis_section(agent_id),
             "",
             relevant_history,
             "",

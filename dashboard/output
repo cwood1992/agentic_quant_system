@@ -32,7 +32,7 @@
 </head>
 <body>
 <h1>Agentic Quant System</h1>
-<div class="meta">Generated: 2026-03-12 19:32 UTC</div>
+<div class="meta">Generated: 2026-03-13 18:39 UTC</div>
 
 <div class="status-bar">
     <div class="status-card">
@@ -41,11 +41,11 @@
     </div>
     <div class="status-card">
         <div class="label">High-Water Mark</div>
-        <div class="value">$0.00</div>
+        <div class="value">$500.04</div>
     </div>
     <div class="status-card">
         <div class="label">Strategies</div>
-        <div class="value">9</div>
+        <div class="value">15</div>
     </div>
     <div class="status-card">
         <div class="label">Recent Trades</div>
@@ -72,8 +72,14 @@
 <h2>Strategy Lifecycle</h2>
 <table>
 <tr><th>Strategy</th><th>Agent</th><th>Namespace</th><th>Stage</th><th>Created</th><th>Updated</th></tr>
-<tr><td>quant_primary_hyp_001_ethbtc_spread</td><td>quant_primary</td><td>quant_primary</td><td style='color:#888;font-weight:bold'>hypothesis</td><td>2026-03-12</td><td>2026-03-12</td></tr>
-<tr><td>quant_primary_hyp_002_btc_fear_reversal</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-12</td><td>2026-03-12</td></tr>
+<tr><td>quant_primary_hyp_002_ethbtc_rotation</td><td>quant_primary</td><td>quant_primary</td><td style='color:#888;font-weight:bold'>hypothesis</td><td>2026-03-13</td><td>2026-03-13</td></tr>
+<tr><td>quant_primary_hyp_003_fear_recovery</td><td>quant_primary</td><td>quant_primary</td><td style='color:#888;font-weight:bold'>hypothesis</td><td>2026-03-13</td><td>2026-03-13</td></tr>
+<tr><td>quant_primary_hyp_002_btc_fear_reversal</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-12</td><td>2026-03-13</td></tr>
+<tr><td>quant_primary_hyp_002_btc_fear_reversal</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-13</td><td>2026-03-13</td></tr>
+<tr><td>quant_primary_hyp_001_ethbtc_pair_trade</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-13</td><td>2026-03-13</td></tr>
+<tr><td>quant_primary_hyp_002_fear_btc_contrarian</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-12</td><td>2026-03-12</td></tr>
+<tr><td>quant_primary_hyp_001_ethbtc_spread</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-12</td><td>2026-03-12</td></tr>
+<tr><td>quant_primary_hyp_001_ethbtc_spread</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-12</td><td>2026-03-12</td></tr>
 <tr><td>quant_primary_hyp_001_ethbtc_stat_arb</td><td>quant_primary</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>graveyard</td><td>2026-03-12</td><td>2026-03-12</td></tr>
 <tr><td>quant_primary_btc_trend_ema_crossover_v1</td><td>quant_primary</td><td>quant_primary</td><td style='color:#d4a017;font-weight:bold'>backtest</td><td>2026-03-12</td><td>2026-03-12</td></tr>
 <tr><td>quant_primary_hyp_002_btc_4h_oscillation</td><td>quant_primary</td><td>quant_primary</td><td style='color:#e07000;font-weight:bold'>robustness</td><td>2026-03-11</td><td>2026-03-12</td></tr>
@@ -89,6 +95,7 @@
 <h2>Risk Gate Log</h2>
 <table>
 <tr><th>ID</th><th>Time</th><th>Agent</th><th>Type</th><th>Status</th><th>Reason</th></tr>
+<tr><td>2</td><td>2026-03-13T18:39</td><td>quant_primary</td><td>benchmark_action</td><td class=''>executed</td><td>non-signal instruction, no risk check required</td></tr>
 <tr><td>1</td><td>2026-03-12T18:11</td><td>quant_primary</td><td>benchmark_action</td><td class=''>executed</td><td>non-signal instruction, no risk check required</td></tr>
 
 </table>
@@ -106,8 +113,8 @@
 <h2>Supplementary Feeds</h2>
 <table>
 <tr><th>Feed</th><th>Value</th><th>Timestamp</th><th>Source</th></tr>
-<tr><td>fear_greed_index</td><td>18.0000</td><td>2026-03-12T00:00</td><td>alternative.me</td></tr>
-<tr><td>polymarket</td><td>0.4880</td><td>2026-03-12T19:29</td><td>polymarket.com</td></tr>
+<tr><td>fear_greed_index</td><td>15.0000</td><td>2026-03-13T00:00</td><td>alternative.me</td></tr>
+<tr><td>polymarket</td><td>0.4885</td><td>2026-03-13T18:36</td><td>polymarket.com</td></tr>
 
 </table>
 </div>

@@ -158,13 +158,14 @@ class TestPerAgentScoping:
 class TestEmptySectionCollapsing:
     """Test that empty sections are collapsed to single-line headers."""
 
-    def test_empty_portfolio_collapsed(self, db, quant_config):
-        """Empty portfolio section should show (empty) marker."""
+    def test_empty_portfolio_shows_equity(self, db, quant_config):
+        """Empty portfolio section should show equity summary with no positions."""
         builder = DigestBuilder("quant_alpha", quant_config, db)
         portfolio = builder.build_portfolio_section("quant_alpha")
 
-        assert "(empty)" in portfolio
         assert "PORTFOLIO STATE" in portfolio
+        assert "Total equity:" in portfolio
+        assert "Open positions: 0 (all cash)" in portfolio
 
     def test_empty_agent_messages_collapsed(self, db, quant_config):
         """Empty agent messages section should show (empty) marker."""

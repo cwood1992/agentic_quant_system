@@ -6,6 +6,7 @@ circuit breaker state, and per-agent cycle/strategy information.
 
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from database.schema import get_db
 from logging_config import get_logger
@@ -24,7 +25,7 @@ def generate_state_md(db_path: str, config: dict) -> str:
         Markdown-formatted string with GLOBAL and per-agent sections.
     """
     conn = get_db(db_path)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d %I:%M:%S %p %Z")
 
     lines: list[str] = []
     lines.append("# System State")
@@ -36,8 +37,10 @@ def generate_state_md(db_path: str, config: dict) -> str:
     lines.append("## GLOBAL")
     lines.append("")
 
-    # Total equity
+    # Total equity — try total_equity first, fall back to portfolio_value_usd
     equity = _get_system_value(conn, "total_equity", 0.0)
+    if equity == 0.0:
+        equity = _get_system_value(conn, "portfolio_value_usd", 0.0)
 
     # High-water mark
     hwm_row = conn.execute(
@@ -111,8 +114,20 @@ def generate_state_md(db_path: str, config: dict) -> str:
         # Consecutive failures
         consecutive_failures = _get_consecutive_failures(conn, agent_id)
 
-        # Wake cadence
+        # Wake cadence — prefer dynamically updated schedule over static config
         cadence_hours = agent_cfg.get("cadence_hours", 4)
+        wake_row = conn.execute(
+            "SELECT payload FROM events "
+            "WHERE agent_id = ? AND event_type = 'wake_schedule_update' "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+        if wake_row:
+            try:
+                ws = json.loads(wake_row["payload"])
+                cadence_hours = ws.get("base_cadence_hours", cadence_hours)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         # Next scheduled wake — not available without scheduler reference,
         # so we report "managed by wake controller"

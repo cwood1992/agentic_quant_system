@@ -242,8 +242,17 @@ def create_all_tables(db_path: str) -> None:
             resolution TEXT DEFAULT 'daily'
         )
     """)
+    # Deduplicate any existing rows before adding unique constraint
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_supp_feed_time
+        DELETE FROM supplementary_feeds
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM supplementary_feeds
+            GROUP BY feed_name, timestamp
+        )
+    """)
+    cursor.execute("DROP INDEX IF EXISTS idx_supp_feed_time")
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_supp_feed_unique
         ON supplementary_feeds(feed_name, timestamp)
     """)
 

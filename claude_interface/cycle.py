@@ -13,7 +13,12 @@ from claude_interface.error_recovery import (
     check_auto_pause,
     log_failed_cycle,
 )
-from claude_interface.parser import dispatch_instructions, parse_agent_output
+from claude_interface.parser import (
+    age_research_notes,
+    dispatch_instructions,
+    expire_old_research_notes,
+    parse_agent_output,
+)
 from database.schema import get_db
 from digest.builder import DigestBuilder
 from logging_config import get_logger
@@ -51,6 +56,15 @@ def run_cycle(
         "wake_reason": wake_reason,
         "timestamp": now,
     })
+
+    # ---- 0. Age and expire research notes ----
+    try:
+        aged = age_research_notes(db_path, agent_id)
+        expired = expire_old_research_notes(db_path, agent_id)
+        if aged or expired:
+            logger.info("Research notes: aged %d, expired %d", aged, expired)
+    except Exception as exc:
+        logger.warning("Failed to age/expire research notes: %s", exc)
 
     # ---- 1. Build digest ----
     try:

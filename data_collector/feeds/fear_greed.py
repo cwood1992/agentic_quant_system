@@ -11,7 +11,7 @@ from logging_config import get_logger
 logger = get_logger("data_collector.feeds.fear_greed")
 
 # URL for the alternative.me Fear & Greed API
-FEAR_GREED_API_URL = "https://api.alternative.me/fng/"
+FEAR_GREED_API_URL = "https://api.alternative.me/fng/?limit=90&format=json"
 
 
 class FearGreedFeed(SupplementaryFeed):
@@ -37,12 +37,12 @@ class FearGreedFeed(SupplementaryFeed):
         return 0.0
 
     def fetch(self) -> list[dict]:
-        """Fetch the latest Fear & Greed Index value.
+        """Fetch up to 90 days of Fear & Greed Index history.
 
         Uses urllib to avoid adding requests as a dependency.
 
         Returns:
-            List with a single dict containing the latest index value.
+            List of dicts, one per day, with historical index values.
         """
         import json
         import urllib.request
@@ -53,35 +53,37 @@ class FearGreedFeed(SupplementaryFeed):
                 FEAR_GREED_API_URL,
                 headers={"User-Agent": "agentic-quant-system/1.0"},
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
             if "data" not in data or not data["data"]:
                 logger.warning("No data in Fear & Greed API response")
                 return []
 
-            entry = data["data"][0]
-            value = int(entry.get("value", 0))
-            ts_unix = int(entry.get("timestamp", 0))
+            results = []
+            for entry in data["data"]:
+                value = int(entry.get("value", 0))
+                ts_unix = int(entry.get("timestamp", 0))
 
-            if ts_unix > 0:
-                timestamp = datetime.fromtimestamp(
-                    ts_unix, tz=timezone.utc
-                ).isoformat()
-            else:
-                timestamp = datetime.now(timezone.utc).isoformat()
+                if ts_unix > 0:
+                    timestamp = datetime.fromtimestamp(
+                        ts_unix, tz=timezone.utc
+                    ).isoformat()
+                else:
+                    timestamp = datetime.now(timezone.utc).isoformat()
 
-            classification = entry.get("value_classification", "")
+                classification = entry.get("value_classification", "")
 
-            return [
-                {
+                results.append({
                     "feed_name": self.name(),
                     "timestamp": timestamp,
                     "value": value,
                     "source": self.source(),
                     "metadata": {"classification": classification},
-                }
-            ]
+                })
+
+            logger.info("Fetched %d Fear & Greed records", len(results))
+            return results
 
         except urllib.error.URLError as exc:
             logger.error("Failed to fetch Fear & Greed Index: %s", exc)
