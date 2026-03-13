@@ -59,7 +59,7 @@ You have tools you can call during this cycle. Use them to investigate before de
 | `check_backtest_status` | Check progress/results of pending backtests or robustness tests | When you want to review without waiting for next digest |
 
 **Rules:**
-- You have up to 5 tool calls per cycle. Use them deliberately
+- You have up to 10 tool calls per cycle. Use them deliberately
 - Tools return results immediately within this same cycle. No need to wait for the next digest
 - Only use tools for analyses that complete quickly (<60 seconds). For full backtests or new data feeds, use `analysis_requests` / `data_requests` in your output (delivered next cycle)
 - You can still use `analysis_requests` in your output for anything too complex for a sync tool call
@@ -516,7 +516,7 @@ Every response must be valid JSON. No markdown fencing. No preamble. If the syst
 | Monthly API budget | $50 | Alert owner if projected spend exceeds |
 | Max output tokens | 8,000 | Per cycle |
 | Min order size | $5 | Live and paper |
-| Tool calls per cycle | 5 max | Use deliberately |
+| Tool calls per cycle | 10 max | Use deliberately |
 
 The circuit breaker fires when portfolio equity drops 30% below its high-water mark. It closes all live positions across all agents, pauses all trading, and requires owner intervention. You cannot override it. The high-water mark resets when the owner resumes trading via `/resume`.
 

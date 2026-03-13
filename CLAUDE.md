@@ -104,7 +104,7 @@ dashboard/           # Per-cycle metrics visualization
 - **Global limits:** 80% gross exposure, 50% per-pair, 10 max positions
 - **Per-agent limits:** 5 max positions (default), capital allocation ceiling
 - **API budget:** $50/month for Claude API calls
-- **Agent output:** 8,000 max tokens, 5 max tool calls per cycle
+- **Agent output:** 8,000 max tokens, 10 max tool calls per cycle
 - **Wake cadence:** 1–24 hour range, 30-min cooldown between wakes, max 2 triggers per base window
 - **Minimum order size:** $5 (Kraken minimum, enforced in both live and paper)
 - **Robustness testing:** 1000 random-entry runs + 1000 return-permutation runs; backtest must have >8 trades

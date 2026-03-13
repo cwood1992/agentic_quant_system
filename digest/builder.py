@@ -992,7 +992,27 @@ class DigestBuilder:
         return self._collapse_if_empty("RELEVANT HISTORY", content)
 
     # ------------------------------------------------------------------
-    # 10. Requested analysis section (pre-computed z-scores)
+    # 10. Prior cycle notes section
+    # ------------------------------------------------------------------
+
+    def build_prior_cycle_notes_section(self, agent_id: str) -> str:
+        """Retrieve the most recent cycle_notes from the events table."""
+        row = self.conn.execute(
+            "SELECT payload FROM events "
+            "WHERE agent_id = ? AND event_type = 'cycle_notes' "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+        if not row:
+            return ""
+        try:
+            data = json.loads(row["payload"])
+            return data.get("cycle_notes", "")
+        except (json.JSONDecodeError, TypeError):
+            return row["payload"] if row["payload"] else ""
+
+    # ------------------------------------------------------------------
+    # 11. Requested analysis section (pre-computed z-scores)
     # ------------------------------------------------------------------
 
     def build_requested_analysis_section(self, agent_id: str) -> str:
@@ -1226,7 +1246,7 @@ class DigestBuilder:
             "",
             self.build_agent_messages_section(agent_id),
             "",
-            self._collapse_if_empty("PRIOR CYCLE NOTES", ""),
+            self._collapse_if_empty("PRIOR CYCLE NOTES", self.build_prior_cycle_notes_section(agent_id)),
             "",
             self._collapse_if_empty("PENDING OWNER REQUESTS", ""),
             "",

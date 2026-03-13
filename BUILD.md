@@ -520,7 +520,7 @@ AGENT_TOOLS = {"quant": QUANT_TOOLS, "risk_monitor": RISK_TOOLS, "portfolio_mana
 ```python
 # claude_interface/caller.py
 
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 10
 TOOL_TIMEOUT_SECONDS = 60
 
 def call_agent(agent_id, agent_config, digest, wake_reason, prior_response=None):

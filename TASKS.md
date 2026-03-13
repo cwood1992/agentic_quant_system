@@ -204,10 +204,10 @@
   - AC: Uses brief as system prompt with `cache_control: {"type": "ephemeral"}`
   - AC: Passes digest as user message
   - AC: Returns parsed JSON dict on success, None on failure
-- [x] Implement tool use loop: up to `MAX_TOOL_ITERATIONS=5` rounds of tool calls
+- [x] Implement tool use loop: up to `MAX_TOOL_ITERATIONS=10` rounds of tool calls
   - AC: On `stop_reason == "tool_use"`, executes tool calls and appends results to messages
   - AC: On `stop_reason == "end_turn"`, returns parsed final response
-  - AC: Loop exits after 5 tool iterations even if agent keeps requesting tools
+  - AC: Loop exits after 10 tool iterations even if agent keeps requesting tools
   - Test: Mock Anthropic client that returns 3 tool_use rounds then end_turn; verify all 3 tool results provided
 - [x] Implement `select_model(wake_reason, prior_response, agent_config) -> str` per BUILD.md logic
   - AC: Trigger wake reasons return escalation_model (opus)

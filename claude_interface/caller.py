@@ -17,7 +17,7 @@ from database.schema import get_db
 from claude_interface.tools import AGENT_TOOLS, COMMON_TOOLS
 from claude_interface.tool_executor import execute_tool_calls
 
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 10
 TOOL_TIMEOUT_SECONDS = 60
 
 

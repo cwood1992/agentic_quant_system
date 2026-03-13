@@ -15,7 +15,7 @@ claude:
   default_model: claude-sonnet-4-6
   escalation_model: claude-opus-4-6
   max_output_tokens: 16000
-  max_tool_iterations: 5
+  max_tool_iterations: 10
   max_monthly_api_budget_usd: 50
 
 # === Telegram ===
