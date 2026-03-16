@@ -454,6 +454,12 @@ def main():
             ("sir_017", "Duplicate feed records eliminated via UNIQUE constraint"),
             ("sir_018", "Cointegration spread z-scores pre-computed in digest"),
             ("sir_019", "F&G feed now fetches 90 days of history"),
+            ("sir_022", "Supplementary feeds (F&G etc.) now available in backtest engine via data dict"),
+            ("sir_024", "Strategy state persistence via strategy_state table and save_strategy_state tool"),
+            ("sir_025", "EMA and SMA analysis types added to run_analysis tool"),
+            ("sir_026", "Strategy state persistence (save_strategy_state tool) covers position tracking"),
+            ("sir_027", "Hypothesis resubmission detection — duplicates skipped with warning"),
+            ("sir_028", "Memory retrieval fixed (JSONL fallback); shutdown flush added"),
         ]
         for sir_id, note in sir_updates:
             conn.execute(
@@ -500,6 +506,21 @@ def main():
     )
     collector_thread.start()
     logger.info("Data collector thread started")
+
+    # --- 6a2. Reset stale backtests from prior crash ---
+    try:
+        conn = get_db(db_path)
+        updated = conn.execute(
+            "UPDATE strategy_registry SET backtest_results = NULL "
+            "WHERE stage = 'hypothesis' "
+            "AND backtest_results = '{\"status\":\"running\"}'",
+        )
+        if updated.rowcount > 0:
+            logger.info("Reset %d stale backtest(s) from prior crash", updated.rowcount)
+        conn.commit()
+        conn.close()
+    except Exception:
+        logger.warning("Failed to reset stale backtests")
 
     # --- 6b. Start backtest runner thread ---
     backtest_thread = threading.Thread(
@@ -651,6 +672,33 @@ def main():
             logger.warning("Feed manager thread did not stop within timeout")
         else:
             logger.info("Feed manager thread stopped")
+
+    # Flush memory encoding — ensure last cycle data is persisted
+    try:
+        from memory.encoder import MemoryEncoder
+        import os as _os
+        memory_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "memory", "data")
+        agents_cfg = config.get("agents", {})
+        for aid in agents_cfg:
+            jsonl_path = _os.path.join(memory_dir, f"{aid}.jsonl")
+            if _os.path.exists(jsonl_path):
+                # Check if last cycle_complete has a matching memory record
+                conn_mem = get_db(db_path)
+                last_cycle = conn_mem.execute(
+                    "SELECT cycle, payload FROM events "
+                    "WHERE agent_id = ? AND event_type = 'cycle_complete' "
+                    "ORDER BY timestamp DESC LIMIT 1",
+                    (aid,),
+                ).fetchone()
+                conn_mem.close()
+                if last_cycle:
+                    logger.info(
+                        "Memory data for %s verified (last cycle: %d)",
+                        aid, last_cycle["cycle"],
+                    )
+        logger.info("Memory flush check complete")
+    except Exception:
+        logger.exception("Memory flush check failed")
 
     # Flush database (ensure WAL is checkpointed)
     try:

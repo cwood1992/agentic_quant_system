@@ -69,7 +69,8 @@ def execute_tool_calls(
         try:
             # Dispatch based on handler signature needs
             if tool_name in ("run_analysis", "check_backtest_status",
-                             "list_agent_messages", "write_strategy_code"):
+                             "list_agent_messages", "write_strategy_code",
+                             "save_strategy_state"):
                 result_str = handler(params, agent_id, db_path)
             elif tool_name == "query_memory":
                 result_str = handler(params, agent_id)
@@ -144,7 +145,7 @@ def handle_run_analysis(params: dict, agent_id: str, db_path: str) -> str:
         })
 
     # Methods that accept a single pair string and must be called per-pair
-    _per_pair_methods = {"autocorrelation", "distribution", "rolling_sharpe"}
+    _per_pair_methods = {"autocorrelation", "distribution", "rolling_sharpe", "ema", "sma"}
 
     try:
         if analysis_type == "rolling_beta":
@@ -155,6 +156,11 @@ def handle_run_analysis(params: dict, agent_id: str, db_path: str) -> str:
                 results = {"error": "rolling_beta requires pairs[0] as target and 'reference' param"}
             else:
                 results = engine.rolling_beta(target, reference, timeframe, window_days, lookback_days)
+        elif analysis_type in ("ema", "sma"):
+            period = int(params.get("period", 20))
+            results = {}
+            for pair in pairs:
+                results[pair] = method(pair, timeframe, lookback_days, period=period)
         elif analysis_type in _per_pair_methods:
             # Run once per pair, return dict keyed by pair
             results = {}
@@ -497,4 +503,39 @@ def handle_write_strategy_code(params: dict, agent_id: str, db_path: str) -> str
         "strategy_id": strategy_id,
         "file_path": str(hyp_file),
         "code_length": len(code),
+    })
+
+
+@_register("save_strategy_state")
+def handle_save_strategy_state(params: dict, agent_id: str, db_path: str) -> str:
+    """Persist arbitrary key-value state for a strategy.
+
+    Stores state in the strategy_state table so it survives restarts
+    and is available in subsequent cycles.
+    """
+    strategy_id = params.get("strategy_id", "").strip()
+    state = params.get("state", {})
+
+    if not strategy_id:
+        return json.dumps({"error": "strategy_id is required"})
+    if not state or not isinstance(state, dict):
+        return json.dumps({"error": "state must be a non-empty object"})
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db(db_path)
+    try:
+        for key, value in state.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO strategy_state "
+                "(strategy_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
+                (strategy_id, str(key), json.dumps(value), now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return json.dumps({
+        "status": "ok",
+        "strategy_id": strategy_id,
+        "keys_saved": list(state.keys()),
     })

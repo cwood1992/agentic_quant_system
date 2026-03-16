@@ -24,6 +24,8 @@ COMMON_TOOLS = [
                         "distribution",
                         "cointegration",
                         "rolling_beta",
+                        "ema",
+                        "sma",
                         "orderbook",
                         "funding_rates",
                         "custom",
@@ -39,6 +41,10 @@ COMMON_TOOLS = [
                 "window_days": {
                     "type": "integer",
                     "description": "Rolling window in days for rolling_beta (default: 30)",
+                },
+                "period": {
+                    "type": "integer",
+                    "description": "Period for ema/sma (default: 20). Common values: 9, 20, 50, 200.",
                 },
                 "description": {"type": "string"},
             },
@@ -64,6 +70,25 @@ COMMON_TOOLS = [
 ]
 
 QUANT_TOOLS = COMMON_TOOLS + [
+    {
+        "name": "save_strategy_state",
+        "description": (
+            "Persist key-value state for a strategy between cycles. "
+            "Use to track position side, entry prices, signal phase, etc. "
+            "State survives restarts and is available in the next cycle's digest."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "strategy_id": {"type": "string"},
+                "state": {
+                    "type": "object",
+                    "description": "Key-value pairs to persist (e.g. {\"position_side\": \"long_btc\", \"entry_price\": 74500})",
+                },
+            },
+            "required": ["strategy_id", "state"],
+        },
+    },
     {
         "name": "check_backtest_status",
         "description": "Check status of a pending backtest or robustness test.",

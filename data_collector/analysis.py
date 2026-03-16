@@ -461,6 +461,96 @@ class AnalysisEngine:
         }
 
     # ------------------------------------------------------------------
+    # 7. EMA (Exponential Moving Average)
+    # ------------------------------------------------------------------
+
+    def ema(
+        self, pair: str, timeframe: str, lookback_days: int = 30, period: int = 20
+    ) -> dict:
+        """Compute Exponential Moving Average for a pair.
+
+        Args:
+            pair: Trading pair.
+            timeframe: OHLCV timeframe.
+            lookback_days: Days of data to load.
+            period: EMA period (default 20).
+
+        Returns:
+            Dict with pair, period, current_ema, current_price,
+            price_vs_ema, recent_values (last 5).
+        """
+        closes = self._load_closes(pair, timeframe, lookback_days)
+        if len(closes) < period:
+            return {"pair": pair, "error": f"Insufficient data: {len(closes)} < {period}"}
+
+        multiplier = 2.0 / (period + 1)
+        ema_val = float(np.mean(closes[:period]))
+
+        ema_values = [ema_val]
+        for price in closes[period:]:
+            ema_val = (float(price) - ema_val) * multiplier + ema_val
+            ema_values.append(ema_val)
+
+        current_price = float(closes[-1])
+        current_ema = ema_values[-1]
+        diff_pct = (current_price - current_ema) / current_ema * 100
+
+        return {
+            "pair": pair,
+            "period": period,
+            "current_ema": round(current_ema, 6),
+            "current_price": round(current_price, 6),
+            "price_vs_ema": f"{diff_pct:+.2f}%",
+            "price_above_ema": current_price > current_ema,
+            "recent_values": [round(v, 4) for v in ema_values[-5:]],
+            "data_points": len(closes),
+        }
+
+    # ------------------------------------------------------------------
+    # 8. SMA (Simple Moving Average)
+    # ------------------------------------------------------------------
+
+    def sma(
+        self, pair: str, timeframe: str, lookback_days: int = 30, period: int = 20
+    ) -> dict:
+        """Compute Simple Moving Average for a pair.
+
+        Args:
+            pair: Trading pair.
+            timeframe: OHLCV timeframe.
+            lookback_days: Days of data to load.
+            period: SMA period (default 20).
+
+        Returns:
+            Dict with pair, period, current_sma, current_price,
+            price_vs_sma, recent_values (last 5).
+        """
+        closes = self._load_closes(pair, timeframe, lookback_days)
+        if len(closes) < period:
+            return {"pair": pair, "error": f"Insufficient data: {len(closes)} < {period}"}
+
+        # Rolling SMA
+        sma_values = []
+        for i in range(period - 1, len(closes)):
+            sma_val = float(np.mean(closes[i - period + 1 : i + 1]))
+            sma_values.append(sma_val)
+
+        current_price = float(closes[-1])
+        current_sma = sma_values[-1]
+        diff_pct = (current_price - current_sma) / current_sma * 100
+
+        return {
+            "pair": pair,
+            "period": period,
+            "current_sma": round(current_sma, 6),
+            "current_price": round(current_price, 6),
+            "price_vs_sma": f"{diff_pct:+.2f}%",
+            "price_above_sma": current_price > current_sma,
+            "recent_values": [round(v, 4) for v in sma_values[-5:]],
+            "data_points": len(closes),
+        }
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 

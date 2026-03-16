@@ -81,10 +81,13 @@ class BacktestRunner:
         else:
             strategy = strategy_class
 
+        # Load supplementary feeds for strategies that need them
+        feeds = self._load_supplementary_feeds(lookback_days)
+
         # Run simulation
         starting_capital = hypothesis_config.get("starting_capital", 10000.0)
         trades, equity_curve = self._simulate(
-            strategy, candles, pair, starting_capital
+            strategy, candles, pair, starting_capital, feeds=feeds
         )
 
         trade_count = len(trades)
@@ -142,6 +145,51 @@ class BacktestRunner:
 
         return [dict(r) for r in rows]
 
+    def _load_supplementary_feeds(
+        self, lookback_days: int
+    ) -> dict[str, list[dict]]:
+        """Load supplementary feed data (e.g. Fear & Greed Index) for backtesting.
+
+        Returns:
+            Dict keyed by feed_name, each containing a time-sorted list of
+            {timestamp, value, metadata} records.
+        """
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        ).isoformat()
+
+        conn = get_db(self.db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT feed_name, timestamp, value, metadata
+                FROM supplementary_feeds
+                WHERE timestamp >= ?
+                ORDER BY feed_name, timestamp ASC
+                """,
+                (cutoff,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        feeds: dict[str, list[dict]] = {}
+        for r in rows:
+            name = r["feed_name"]
+            if name not in feeds:
+                feeds[name] = []
+            entry = {
+                "timestamp": r["timestamp"],
+                "value": r["value"],
+            }
+            if r["metadata"]:
+                try:
+                    entry["metadata"] = json.loads(r["metadata"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            feeds[name].append(entry)
+
+        return feeds
+
     # ------------------------------------------------------------------
     # Simulation engine
     # ------------------------------------------------------------------
@@ -152,6 +200,7 @@ class BacktestRunner:
         candles: list[dict],
         pair: str,
         starting_capital: float,
+        feeds: dict[str, list[dict]] | None = None,
     ) -> tuple[list[dict], np.ndarray]:
         """Simulate strategy execution over historical candles.
 
@@ -160,6 +209,7 @@ class BacktestRunner:
             candles: Chronological candle data.
             pair: Trading pair.
             starting_capital: Initial capital in USD.
+            feeds: Optional supplementary feed data keyed by feed name.
 
         Returns:
             Tuple of (trades list, equity curve ndarray).
@@ -170,6 +220,7 @@ class BacktestRunner:
         entry_time = ""
         trades: list[dict] = []
         equity_values = [starting_capital]
+        feeds = feeds or {}
 
         for i, candle in enumerate(candles):
             # Build data dict for strategy
@@ -179,6 +230,18 @@ class BacktestRunner:
                 "index": i,
                 "candles_so_far": candles[: i + 1],
             }
+
+            # Attach supplementary feeds — latest value at or before candle timestamp
+            candle_ts = candle["timestamp"]
+            for feed_name, feed_data in feeds.items():
+                latest_val = None
+                for entry in feed_data:
+                    if entry["timestamp"] <= candle_ts:
+                        latest_val = entry
+                    else:
+                        break
+                if latest_val is not None:
+                    data[feed_name] = latest_val
 
             signals = strategy.on_data(data)
 

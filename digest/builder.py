@@ -270,17 +270,34 @@ class DigestBuilder:
             hypothesis = [s for s in strategies if s["stage"] == "hypothesis"]
             graveyard = [s for s in strategies if s["stage"] == "graveyard"]
 
+            # Load persisted strategy state for active strategies
+            def _load_strategy_state(strategy_id):
+                rows = conn.execute(
+                    "SELECT key, value FROM strategy_state WHERE strategy_id = ?",
+                    (strategy_id,),
+                ).fetchall()
+                if not rows:
+                    return ""
+                state = {}
+                for r in rows:
+                    try:
+                        state[r["key"]] = json.loads(r["value"])
+                    except (json.JSONDecodeError, TypeError):
+                        state[r["key"]] = r["value"]
+                return f" | state: {json.dumps(state, separators=(',', ':'))}"
+
             sections = []
 
             # Live strategies
             live_lines = []
             for s in live:
                 config_data = json.loads(s["config"]) if s["config"] else {}
-                paper_res = json.loads(s["paper_results"]) if s["paper_results"] else {}
+                state_str = _load_strategy_state(s["strategy_id"])
                 live_lines.append(
                     f"  {s['strategy_id']} | ns:{s['namespace']} | "
                     f"since {s['updated_at']} | "
                     f"config: {json.dumps(config_data, separators=(',', ':'))}"
+                    f"{state_str}"
                 )
             sections.append(self._collapse_if_empty("LIVE STRATEGIES", "\n".join(live_lines)))
 
@@ -288,22 +305,68 @@ class DigestBuilder:
             paper_lines = []
             for s in paper:
                 paper_res = json.loads(s["paper_results"]) if s["paper_results"] else {}
+                state_str = _load_strategy_state(s["strategy_id"])
                 paper_lines.append(
                     f"  {s['strategy_id']} | ns:{s['namespace']} | "
                     f"since {s['updated_at']} | "
                     f"results: {json.dumps(paper_res, separators=(',', ':'))}"
+                    f"{state_str}"
                 )
             sections.append(self._collapse_if_empty("PAPER STRATEGIES", "\n".join(paper_lines)))
 
-            # Backtest queue
-            bt_lines = []
-            for s in backtest:
+            # Split backtest/robustness into action-oriented sections
+            def _rob_passed(s):
+                try:
+                    rob = json.loads(s["robustness_results"] or "{}")
+                    return rob.get("passed", False)
+                except (json.JSONDecodeError, TypeError):
+                    return False
+
+            def _rob_metrics(s):
+                try:
+                    rob = json.loads(s["robustness_results"] or "{}")
+                    re = rob.get("random_entry", {})
+                    return (
+                        f"sharpe_pct={re.get('sharpe_percentile', '?')}, "
+                        f"return_pct={re.get('total_return_percentile', '?')}"
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    return ""
+
+            ready_for_paper = [s for s in backtest if s["stage"] == "robustness" and _rob_passed(s)]
+            rob_failed = [s for s in backtest if s["robustness_results"] and not _rob_passed(s)]
+            bt_pending = [s for s in backtest if s not in ready_for_paper and s not in rob_failed]
+
+            # READY FOR PAPER — passed robustness, awaiting agent promotion
+            rfp_lines = []
+            if ready_for_paper:
+                rfp_lines.append("  ** PASSED ROBUSTNESS — promote to paper or kill with reason **")
+            for s in ready_for_paper:
                 bt_res = json.loads(s["backtest_results"]) if s["backtest_results"] else {}
-                rob_res = json.loads(s["robustness_results"]) if s["robustness_results"] else {}
+                rfp_lines.append(
+                    f"  {s['strategy_id']} | {_rob_metrics(s)} | "
+                    f"trades={bt_res.get('trade_count', '?')} | since {s['updated_at']}"
+                )
+            sections.append(self._collapse_if_empty("READY FOR PAPER", "\n".join(rfp_lines)))
+
+            # ROBUSTNESS FAILED — agent must tweak or kill
+            rf_lines = []
+            if rob_failed:
+                rf_lines.append("  ** FAILED ROBUSTNESS — tweak params and resubmit, or kill with reason **")
+            for s in rob_failed:
+                bt_res = json.loads(s["backtest_results"]) if s["backtest_results"] else {}
+                rf_lines.append(
+                    f"  {s['strategy_id']} | {_rob_metrics(s)} | "
+                    f"trades={bt_res.get('trade_count', '?')} | since {s['updated_at']}"
+                )
+            sections.append(self._collapse_if_empty("ROBUSTNESS FAILED", "\n".join(rf_lines)))
+
+            # BACKTEST QUEUE — in-progress backtests, awaiting robustness
+            bt_lines = []
+            for s in bt_pending:
+                bt_res = json.loads(s["backtest_results"]) if s["backtest_results"] else {}
                 status_detail = f"stage:{s['stage']}"
-                if rob_res:
-                    status_detail += f" | robustness: {json.dumps(rob_res, separators=(',', ':'))}"
-                elif bt_res:
+                if bt_res:
                     status_detail += f" | backtest: {json.dumps(bt_res, separators=(',', ':'))}"
                 bt_lines.append(
                     f"  {s['strategy_id']} | {status_detail} | submitted {s['created_at']}"

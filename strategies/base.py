@@ -7,8 +7,10 @@ executor layer.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 VALID_ACTIONS = {"buy", "sell", "close", "hold"}
@@ -94,3 +96,65 @@ class BaseStrategy(ABC):
             Dictionary of strategy diagnostics / metrics (default empty).
         """
         return {}
+
+    # ------------------------------------------------------------------
+    # State persistence helpers
+    # ------------------------------------------------------------------
+
+    def save_state(self, db_path: str, strategy_id: str) -> None:
+        """Persist strategy instance state to the database.
+
+        Saves all instance attributes starting with ``_position`` or
+        ``_state`` as key-value pairs in the ``strategy_state`` table.
+
+        Args:
+            db_path: Path to the SQLite database.
+            strategy_id: Strategy identifier (used as the DB key).
+        """
+        from database.schema import get_db
+
+        state_vars = {
+            k: v for k, v in self.__dict__.items()
+            if k.startswith("_position") or k.startswith("_state")
+        }
+        if not state_vars:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn = get_db(db_path)
+        try:
+            for key, value in state_vars.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO strategy_state "
+                    "(strategy_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
+                    (strategy_id, key, json.dumps(value), now),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def load_state(self, db_path: str, strategy_id: str) -> None:
+        """Restore strategy instance state from the database.
+
+        Reads all key-value pairs for *strategy_id* from ``strategy_state``
+        and sets them as instance attributes.
+
+        Args:
+            db_path: Path to the SQLite database.
+            strategy_id: Strategy identifier.
+        """
+        from database.schema import get_db
+
+        conn = get_db(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM strategy_state WHERE strategy_id = ?",
+                (strategy_id,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    setattr(self, row["key"], json.loads(row["value"]))
+                except (json.JSONDecodeError, TypeError):
+                    setattr(self, row["key"], row["value"])
+        finally:
+            conn.close()

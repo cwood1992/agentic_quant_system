@@ -321,7 +321,7 @@ def _generate_executive_summary(
     now = datetime.now(timezone.utc).isoformat()
     conn = get_db(db_path)
     conn.execute(
-        "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+        "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, ?)",
         (
             "executive_summary",
             json.dumps({
@@ -330,6 +330,7 @@ def _generate_executive_summary(
                 "cycle": cycle_number,
                 "agent_id": agent_id,
             }),
+            now,
         ),
     )
     conn.commit()

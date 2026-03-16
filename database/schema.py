@@ -230,6 +230,17 @@ def create_all_tables(db_path: str) -> None:
         )
     """)
 
+    # --- strategy_state ---
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS strategy_state (
+            strategy_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (strategy_id, key)
+        )
+    """)
+
     # --- supplementary_feeds ---
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS supplementary_feeds (

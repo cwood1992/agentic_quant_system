@@ -163,12 +163,25 @@ def _dispatch_new_hypotheses(
     # Derive namespace from agent_id (e.g. "quant_primary" -> "quant_primary")
     namespace = agent_id
 
+    dispatched = 0
     for hyp in hypotheses:
         hypothesis_id = hyp.get("hypothesis_id") or hyp.get("id") or str(uuid.uuid4())[:8]
         if hypothesis_id.startswith(f"{namespace}_"):
             strategy_id = hypothesis_id
         else:
             strategy_id = f"{namespace}_{hypothesis_id}"
+
+        # Check if this hypothesis already exists (prevents duplicates after restart)
+        existing = conn.execute(
+            "SELECT strategy_id, stage FROM strategy_registry WHERE strategy_id = ?",
+            (strategy_id,),
+        ).fetchone()
+        if existing:
+            logger.warning(
+                "Hypothesis %s already exists (stage=%s) — skipping resubmission",
+                strategy_id, existing["stage"],
+            )
+            continue
 
         # Extract code before storing config — keep DB slim
         code = hyp.get("code", "").strip()
@@ -217,9 +230,11 @@ def _dispatch_new_hypotheses(
                 file_content = header + "# TODO: Implement strategy module conforming to BaseStrategy interface.\n"
             hyp_file.write_text(file_content, encoding="utf-8")
 
+        dispatched += 1
+
     logger.info(
-        "Dispatched %d new hypothesis(es) for agent %s cycle %d",
-        len(hypotheses), agent_id, cycle,
+        "Dispatched %d new hypothesis(es) for agent %s cycle %d (%d skipped as duplicates)",
+        dispatched, agent_id, cycle, len(hypotheses) - dispatched,
     )
 
 
