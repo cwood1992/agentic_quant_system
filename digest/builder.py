@@ -9,11 +9,14 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from data_collector.collector import compute_volatility_score
 from database.schema import get_db
 from logging_config import get_logger
 from memory.retriever import MemoryRetriever
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class DigestBuilder:
@@ -933,8 +936,8 @@ class DigestBuilder:
         Returns:
             Formatted relevant history section string.
         """
-        # Resolve memory storage path
-        memory_dir = os.path.join("memory", "data")
+        # Resolve memory storage path (absolute to avoid CWD issues)
+        memory_dir = str(_PROJECT_ROOT / "memory" / "data")
         storage_path = os.path.join(memory_dir, f"{agent_id}.mv2")
 
         retriever = MemoryRetriever(storage_path=storage_path, agent_id=agent_id)
@@ -970,6 +973,10 @@ class DigestBuilder:
         self.logger.debug("Memory query for relevant history: %s", query)
 
         results = retriever.search(query=query, top_k=5)
+
+        if not results:
+            self.logger.debug("Search returned empty, trying get_recent()")
+            results = retriever.get_recent(n=3)
 
         if not results:
             return self._collapse_if_empty("RELEVANT HISTORY", "")

@@ -45,15 +45,19 @@ class MemoryRetriever:
             relevance_score. Sorted by relevance (highest first).
         """
         if MEMVID_AVAILABLE and os.path.exists(self.mv2_path):
-            return self._search_memvid(query, top_k)
-        elif os.path.exists(self.jsonl_path):
+            results = self._search_memvid(query, top_k)
+            if results:
+                return results
+            self.logger.debug("memvid returned 0 hits, falling back to JSONL")
+
+        if os.path.exists(self.jsonl_path):
             return self._search_jsonl(query, top_k)
-        else:
-            self.logger.debug(
-                "No memory storage found at %s or %s",
-                self.mv2_path, self.jsonl_path,
-            )
-            return []
+
+        self.logger.debug(
+            "No memory storage found at %s or %s",
+            self.mv2_path, self.jsonl_path,
+        )
+        return []
 
     def get_recent(self, n: int = 3) -> list[dict]:
         """Return the n most recent memory records.
@@ -207,10 +211,14 @@ class MemoryRetriever:
     @staticmethod
     def _record_to_searchable(record: dict) -> str:
         """Convert a record dict into a flat searchable string."""
+        cn = record.get("cycle_notes", "")
+        if isinstance(cn, dict):
+            cn = cn.get("cycle_notes", str(cn))
+
         parts = [
             record.get("regime_classification", ""),
             record.get("market_assessment", ""),
-            record.get("cycle_notes", ""),
+            cn,
             record.get("wake_reason", ""),
         ]
 
@@ -267,6 +275,8 @@ class MemoryRetriever:
             parts.append(f"Events: {'; '.join(events[:5])}")
 
         notes = record.get("cycle_notes", "")
+        if isinstance(notes, dict):
+            notes = notes.get("cycle_notes", str(notes))
         if notes:
             parts.append(f"Notes: {notes[:200]}")
 

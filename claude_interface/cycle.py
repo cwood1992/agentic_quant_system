@@ -7,7 +7,13 @@ dispatch, and error recovery into a single run_cycle() function.
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
+import anthropic
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+from billing.tracker import APIBudgetTracker
 from claude_interface.caller import call_agent
 from claude_interface.error_recovery import (
     check_auto_pause,
@@ -191,7 +197,7 @@ def run_cycle(
 
     # ---- 5. Encode cycle to memory ----
     try:
-        memory_dir = os.path.join("memory", "data")
+        memory_dir = str(_PROJECT_ROOT / "memory" / "data")
         os.makedirs(memory_dir, exist_ok=True)
         mv2_path = os.path.join(memory_dir, f"{agent_id}.mv2")
 
@@ -222,6 +228,17 @@ def run_cycle(
             "Memory encoding failed for cycle %d: %s", cycle_number, exc,
         )
 
+    # ---- 5b. Generate executive summary via Haiku ----
+    try:
+        _generate_executive_summary(
+            parsed_output=parsed if isinstance(parsed, dict) else {},
+            agent_id=agent_id,
+            cycle_number=cycle_number,
+            db_path=db_path,
+        )
+    except Exception as exc:
+        logger.warning("Executive summary generation failed: %s", exc)
+
     # ---- 6. Log cycle_complete ----
     _log_event(db_path, agent_id, cycle_number, "cycle_complete", "cycle_runner", {
         "wake_reason": wake_reason,
@@ -230,6 +247,95 @@ def run_cycle(
 
     logger.info("Cycle %d completed successfully for agent %s", cycle_number, agent_id)
     return True
+
+
+SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+SUMMARY_MAX_TOKENS = 300
+
+
+def _generate_executive_summary(
+    parsed_output: dict,
+    agent_id: str,
+    cycle_number: int,
+    db_path: str,
+) -> None:
+    """Call Haiku to generate a 2-3 sentence executive summary of this cycle.
+
+    Stores the result in system_state under key 'executive_summary'.
+    Non-fatal: caller wraps this in try/except.
+    """
+    logger = get_logger("claude_interface.cycle", agent_id=agent_id)
+
+    # Build context for Haiku from the parsed output
+    cycle_notes = parsed_output.get("cycle_notes", "")
+    if isinstance(cycle_notes, dict):
+        cycle_notes = cycle_notes.get("cycle_notes", str(cycle_notes))
+
+    instructions = parsed_output.get("instructions", [])
+    instruction_summary = ", ".join(
+        f"{i.get('type', 'unknown')}: {i.get('strategy_id', i.get('note_id', ''))}"
+        for i in instructions[:5]
+    ) if instructions else "none"
+
+    research_notes = parsed_output.get("research_notes", [])
+    research_summary = f"{len(research_notes)} notes" if research_notes else "none"
+
+    user_msg = (
+        f"Agent: {agent_id}, Cycle: {cycle_number}\n"
+        f"Instructions issued: {instruction_summary}\n"
+        f"Research notes: {research_summary}\n"
+        f"Cycle notes: {cycle_notes[:1000]}"
+    )
+
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=SUMMARY_MAX_TOKENS,
+        system=(
+            "You are a concise financial analyst. Summarize the trading system's "
+            "current state in 2-3 sentences for the system owner. Focus on: what "
+            "changed this cycle, current risk posture, and key pending actions. "
+            "Do not use markdown formatting. Be direct and specific."
+        ),
+        messages=[{"role": "user", "content": user_msg}],
+    )
+
+    # Track API usage
+    try:
+        APIBudgetTracker(db_path).track_usage(
+            agent_id="system",
+            cycle=cycle_number,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            model=SUMMARY_MODEL,
+        )
+    except Exception:
+        pass
+
+    summary_text = ""
+    for block in response.content:
+        if hasattr(block, "text"):
+            summary_text += block.text
+
+    # Store in system_state
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db(db_path)
+    conn.execute(
+        "INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)",
+        (
+            "executive_summary",
+            json.dumps({
+                "summary": summary_text.strip(),
+                "generated_at": now,
+                "cycle": cycle_number,
+                "agent_id": agent_id,
+            }),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    logger.info("Executive summary generated for cycle %d (%d chars)", cycle_number, len(summary_text))
 
 
 def verify_cycle_events(

@@ -6,9 +6,12 @@ Complex timeout enforcement will be added when handlers perform real I/O.
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from logging_config import get_logger
 from database.schema import get_db
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Conceptual per-tool timeout; enforced in handlers that do real work (Phase 5+).
 TOOL_TIMEOUT_SECONDS = 60
@@ -222,7 +225,7 @@ def _resolve_memory_path(agent_id: str) -> str:
     the JSONL fallback. Checks the standard memory/ directory.
     """
     import os
-    memory_dir = os.path.join("memory", "data")
+    memory_dir = str(_PROJECT_ROOT / "memory" / "data")
     os.makedirs(memory_dir, exist_ok=True)
     return os.path.join(memory_dir, f"{agent_id}.mv2")
 

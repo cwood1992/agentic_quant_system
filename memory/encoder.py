@@ -84,6 +84,8 @@ class MemoryEncoder:
         regime = parsed.get("regime_classification", "")
         market_assessment = parsed.get("market_assessment", "")
         cycle_notes = parsed.get("cycle_notes", "")
+        if isinstance(cycle_notes, dict):
+            cycle_notes = cycle_notes.get("cycle_notes", str(cycle_notes))
         memory_query_hints = parsed.get("memory_query_hints", [])
 
         key_events = []
@@ -138,7 +140,10 @@ class MemoryEncoder:
         if record["key_events"]:
             parts.append(f"Key events: {'; '.join(record['key_events'])}")
         if record["cycle_notes"]:
-            parts.append(f"Notes: {record['cycle_notes']}")
+            notes = record["cycle_notes"]
+            if isinstance(notes, dict):
+                notes = notes.get("cycle_notes", str(notes))
+            parts.append(f"Notes: {notes}")
 
         return "\n".join(parts)
 

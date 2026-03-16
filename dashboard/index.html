@@ -3,22 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="60">
 <title>Agentic Quant System Dashboard</title>
 <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+           background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 1400px; margin: 0 auto; }
     h1 { color: #4fc3f7; margin-bottom: 5px; }
     h2 { color: #81d4fa; margin: 25px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; }
     .meta { color: #888; font-size: 0.85em; margin-bottom: 20px; }
-    .status-bar { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; }
-    .status-card { background: #16213e; padding: 15px 20px; border-radius: 8px;
-                   min-width: 150px; }
-    .status-card .label { color: #888; font-size: 0.8em; text-transform: uppercase; }
-    .status-card .value { font-size: 1.4em; font-weight: bold; margin-top: 3px; }
+    .status-bar { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px; }
+    .status-card { background: #16213e; padding: 12px 18px; border-radius: 8px;
+                   min-width: 130px; flex: 1; }
+    .status-card .label { color: #888; font-size: 0.75em; text-transform: uppercase; }
+    .status-card .value { font-size: 1.3em; font-weight: bold; margin-top: 3px; }
     .status-card .value.ok { color: #4CAF50; }
     .status-card .value.warn { color: #f44336; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 20px;
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px;
             background: #16213e; border-radius: 8px; overflow: hidden; }
     th { background: #0f3460; padding: 10px 12px; text-align: left; font-size: 0.85em;
          text-transform: uppercase; color: #81d4fa; }
@@ -28,11 +29,51 @@
     .rejected { color: #f44336; font-weight: bold; }
     .svg-chart { background: #16213e; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
     .section { margin-bottom: 30px; }
+    .funnel { display: flex; gap: 8px; align-items: flex-end; padding: 20px 0; }
+    .funnel-stage { text-align: center; flex: 1; }
+    .funnel-bar { border-radius: 4px 4px 0 0; min-height: 8px; margin: 0 auto;
+                  width: 80%; transition: height 0.3s; }
+    .funnel-count { font-size: 1.4em; font-weight: bold; margin-top: 6px; }
+    .funnel-label { font-size: 0.75em; color: #888; text-transform: uppercase; margin-top: 2px; }
+    .funnel-arrow { color: #555; font-size: 1.2em; align-self: center; padding-bottom: 30px; }
+
+    /* CSS-only tabs */
+    .tab-group { margin-bottom: 10px; }
+    .tab-group input[type="radio"] { display: none; }
+    .tab-label { display: inline-block; padding: 8px 16px; cursor: pointer; color: #888;
+                  border-bottom: 2px solid transparent; font-size: 0.85em; text-transform: uppercase;
+                  transition: color 0.2s, border-color 0.2s; }
+    .tab-label:hover { color: #aaa; }
+    .tab-content { display: none; padding-top: 12px; }
+
+    /* Strategy tabs - 6 tabs */
+    .tab-group input[name="strat-tabs"]:nth-of-type(1):checked ~ .tab-content:nth-of-type(1),
+    .tab-group input[name="strat-tabs"]:nth-of-type(2):checked ~ .tab-content:nth-of-type(2),
+    .tab-group input[name="strat-tabs"]:nth-of-type(3):checked ~ .tab-content:nth-of-type(3),
+    .tab-group input[name="strat-tabs"]:nth-of-type(4):checked ~ .tab-content:nth-of-type(4),
+    .tab-group input[name="strat-tabs"]:nth-of-type(5):checked ~ .tab-content:nth-of-type(5),
+    .tab-group input[name="strat-tabs"]:nth-of-type(6):checked ~ .tab-content:nth-of-type(6) { display: block; }
+
+    /* Research tabs - 2 tabs */
+    .tab-group input[name="research-tabs"]:nth-of-type(1):checked ~ .tab-content:nth-of-type(1),
+    .tab-group input[name="research-tabs"]:nth-of-type(2):checked ~ .tab-content:nth-of-type(2) { display: block; }
+
+    /* Operations tabs - 5 tabs */
+    .tab-group input[name="ops-tabs"]:nth-of-type(1):checked ~ .tab-content:nth-of-type(1),
+    .tab-group input[name="ops-tabs"]:nth-of-type(2):checked ~ .tab-content:nth-of-type(2),
+    .tab-group input[name="ops-tabs"]:nth-of-type(3):checked ~ .tab-content:nth-of-type(3),
+    .tab-group input[name="ops-tabs"]:nth-of-type(4):checked ~ .tab-content:nth-of-type(4),
+    .tab-group input[name="ops-tabs"]:nth-of-type(5):checked ~ .tab-content:nth-of-type(5) { display: block; }
+
+    /* Highlight active tab */
+    .tab-group input:checked + .tab-label { color: #81d4fa; border-bottom-color: #81d4fa; }
 </style>
 </head>
 <body>
 <h1>Agentic Quant System</h1>
-<div class="meta">Generated: 2026-03-11 16:50 UTC</div>
+<div class="meta">Generated: 2026-03-16 21:59 UTC &mdash; auto-refreshes every 60s</div>
+
+<div style='background:#16213e;border-radius:8px;padding:16px;margin-bottom:20px;color:#555;font-style:italic;'>Awaiting first cycle completion for executive summary.</div>
 
 <div class="status-bar">
     <div class="status-card">
@@ -41,10 +82,30 @@
     </div>
     <div class="status-card">
         <div class="label">High-Water Mark</div>
-        <div class="value">$0.00</div>
+        <div class="value">$500.04</div>
     </div>
     <div class="status-card">
         <div class="label">Strategies</div>
+        <div class="value">24</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Research Notes</div>
+        <div class="value">3</div>
+    </div>
+    <div class="status-card">
+        <div class="label">In Backtest</div>
+        <div class="value">5</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Failed Cycles</div>
+        <div class="value warn">20</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Pending SIRs</div>
+        <div class="value warn">9</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Owner Requests</div>
         <div class="value">0</div>
     </div>
     <div class="status-card">
@@ -54,9 +115,146 @@
 </div>
 
 <div class="section">
+<h2>Agent State Summary</h2>
+<div style='background:#16213e;border-radius:8px;padding:16px;margin-bottom:12px;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'><h3 style='color:#81d4fa;margin:0;'>quant_primary</h3><span style='color:#4CAF50;font-weight:bold;text-transform:uppercase;'>active</span></div><div style='display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px;font-size:0.9em;'><div><span style='color:#888;'>Cycles:</span> <b>25</b></div><div><span style='color:#888;'>Capital:</span> <b>$0.00</b></div><div><span style='color:#888;'>Cadence:</span> <b>6h</b></div><div><span style='color:#888;'>Consec. Failures:</span> <b style='color:#4CAF50'>0</b></div></div><details><summary style='color:#888;cursor:pointer;font-size:0.85em;'>Last Cycle Notes</summary><div style='margin-top:8px;padding:10px;background:#1a1a2e;border-radius:4px;font-size:0.85em;line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto;'>Cycle 25 — 2 system restarts since last cycle. Memory encoding appears wiped (all queries return empty). Prior cycle notes carried forward as text only.
+
+CRITICAL STATE: hyp_002_ethbtc_rotation strategy file EXISTS (write_strategy_code returned &#x27;already exists&#x27;) but the backtest queue is EMPTY — the hypothesis JSON was not processed or was lost in restart. Resubmitting hypothesis JSON this cycle. Strategy code is intact — no need to rewrite.
+
+MARKET STATE: BTC $74,041 (+3.2%/24h, +7.3%/7d), ETH </div></details></div>
+
+</div>
+
+<div class="section">
+<h2>Strategy Lifecycle Funnel</h2>
+<div class="funnel">
+  <div class="funnel-stage">
+    <div class="funnel-bar" style="height:30px;background:#888"></div>
+    <div class="funnel-count" style="color:#888">1</div>
+    <div class="funnel-label">hypothesis</div>
+  </div>
+  <div class="funnel-arrow">&rarr;</div>
+  <div class="funnel-stage">
+    <div class="funnel-bar" style="height:30px;background:#d4a017"></div>
+    <div class="funnel-count" style="color:#d4a017">1</div>
+    <div class="funnel-label">backtest</div>
+  </div>
+  <div class="funnel-arrow">&rarr;</div>
+  <div class="funnel-stage">
+    <div class="funnel-bar" style="height:120px;background:#e07000"></div>
+    <div class="funnel-count" style="color:#e07000">4</div>
+    <div class="funnel-label">robustness</div>
+  </div>
+  <div class="funnel-arrow">&rarr;</div>
+  <div class="funnel-stage">
+    <div class="funnel-bar" style="height:8px;background:#2196F3"></div>
+    <div class="funnel-count" style="color:#2196F3">0</div>
+    <div class="funnel-label">paper</div>
+  </div>
+  <div class="funnel-arrow">&rarr;</div>
+  <div class="funnel-stage">
+    <div class="funnel-bar" style="height:8px;background:#4CAF50"></div>
+    <div class="funnel-count" style="color:#4CAF50">0</div>
+    <div class="funnel-label">live</div>
+  </div>
+  <div style="margin-left:20px;border-left:2px solid #333;padding-left:20px;">
+  <div class="funnel-stage">
+    <div class="funnel-bar" style="height:540px;background:#f44336"></div>
+    <div class="funnel-count" style="color:#f44336">18</div>
+    <div class="funnel-label">graveyard</div>
+  </div>
+  </div>
+</div>
+
+</div>
+
+<div class="section">
 <h2>Equity Curve</h2>
 <div class="svg-chart">
 <p style='color:#888;text-align:center;padding:30px;'>Insufficient data for equity chart</p>
+</div>
+</div>
+
+<div class="section">
+<h2>Strategy Lifecycle</h2>
+<div class="tab-group">
+<input type="radio" name="strat-tabs" id="strat-tab-0" checked><label for="strat-tab-0" class="tab-label"><span style="color:#888;">Hypothesis</span> <span style="color:#555;font-size:0.8em;">(1)</span></label>
+<input type="radio" name="strat-tabs" id="strat-tab-1"><label for="strat-tab-1" class="tab-label"><span style="color:#d4a017;">Backtest</span> <span style="color:#555;font-size:0.8em;">(1)</span></label>
+<input type="radio" name="strat-tabs" id="strat-tab-2"><label for="strat-tab-2" class="tab-label"><span style="color:#e07000;">Robustness</span> <span style="color:#555;font-size:0.8em;">(4)</span></label>
+<input type="radio" name="strat-tabs" id="strat-tab-3"><label for="strat-tab-3" class="tab-label"><span style="color:#2196F3;">Paper</span> <span style="color:#555;font-size:0.8em;">(0)</span></label>
+<input type="radio" name="strat-tabs" id="strat-tab-4"><label for="strat-tab-4" class="tab-label"><span style="color:#4CAF50;">Live</span> <span style="color:#555;font-size:0.8em;">(0)</span></label>
+<input type="radio" name="strat-tabs" id="strat-tab-5"><label for="strat-tab-5" class="tab-label"><span style="color:#f44336;">Graveyard</span> <span style="color:#555;font-size:0.8em;">(18)</span></label>
+<div class="tab-content"><div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #888;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_016_btc_1h_meanrev</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-14 &rarr; 2026-03-14</span></div></div>
+</div>
+<div class="tab-content"><div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #d4a017;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_btc_trend_ema_crossover_v1</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-12 &rarr; 2026-03-12</span></div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Return:</span> <b style='color:#f44336;'>-0.1%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Sharpe:</span> <b style='color:#f44336;'>-3.611</b></span><span style='margin-right:14px;'><span style='color:#888;'>Max DD:</span> <b style='color:#e0e0e0;'>0.1%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Win Rate:</span> <b style='color:#f44336;'>0.2%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>13</b></span><span style='margin-right:14px;'><span style='color:#888;'>Bench:</span> <b style='color:#e0e0e0;'>-0.2%</b></span></div></div>
+</div>
+<div class="tab-content"><div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #e07000;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_btc_4h_oscillation</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-11 &rarr; 2026-03-12</span></div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Return:</span> <b style='color:#f44336;'>-0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Sharpe:</span> <b style='color:#f44336;'>-0.192</b></span><span style='margin-right:14px;'><span style='color:#888;'>Max DD:</span> <b style='color:#e0e0e0;'>0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Win Rate:</span> <b style='color:#f44336;'>0.8%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>16</b></span><span style='margin-right:14px;'><span style='color:#888;'>Bench:</span> <b style='color:#e0e0e0;'>-0.2%</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #e07000;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_ethbtc_statarb</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-11 &rarr; 2026-03-12</span></div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Return:</span> <b style='color:#f44336;'>-0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Sharpe:</span> <b style='color:#f44336;'>-1.357</b></span><span style='margin-right:14px;'><span style='color:#888;'>Max DD:</span> <b style='color:#e0e0e0;'>0.1%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Win Rate:</span> <b style='color:#f44336;'>0.6%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>19</b></span><span style='margin-right:14px;'><span style='color:#888;'>Bench:</span> <b style='color:#e0e0e0;'>-0.4%</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #e07000;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_ethbtc_pairs</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-11 &rarr; 2026-03-12</span></div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Return:</span> <b style='color:#f44336;'>-0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Sharpe:</span> <b style='color:#f44336;'>-0.761</b></span><span style='margin-right:14px;'><span style='color:#888;'>Max DD:</span> <b style='color:#e0e0e0;'>0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Win Rate:</span> <b style='color:#f44336;'>0.7%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>16</b></span><span style='margin-right:14px;'><span style='color:#888;'>Bench:</span> <b style='color:#e0e0e0;'>-0.4%</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #e07000;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_btc_4h_oscillation</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-11 &rarr; 2026-03-12</span></div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Return:</span> <b style='color:#f44336;'>-0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Sharpe:</span> <b style='color:#f44336;'>-1.085</b></span><span style='margin-right:14px;'><span style='color:#888;'>Max DD:</span> <b style='color:#e0e0e0;'>0.0%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Win Rate:</span> <b style='color:#f44336;'>0.5%</b></span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>21</b></span><span style='margin-right:14px;'><span style='color:#888;'>Bench:</span> <b style='color:#e0e0e0;'>-0.2%</b></span></div></div>
+</div>
+<div class="tab-content"><p style='color:#555;padding:20px;'>No strategies at <span style='color:#2196F3;'>paper</span> stage</p></div>
+<div class="tab-content"><p style='color:#555;padding:20px;'>No strategies at <span style='color:#4CAF50;'>live</span> stage</p></div>
+<div class="tab-content"><div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_ethbtc_rotation</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-13 &rarr; 2026-03-16</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_ethbtc_rotation</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-16 &rarr; 2026-03-16</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_ethbtc_rotation</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-16 &rarr; 2026-03-16</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_022_fear_momentum</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-16 &rarr; 2026-03-16</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_020_fear_divergence_momentum</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-15 &rarr; 2026-03-15</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_020_broad_momentum</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-15 &rarr; 2026-03-15</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_019_ethbtc_longonly_coint</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-15 &rarr; 2026-03-15</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_015_btc_fear_contrarian</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-14 &rarr; 2026-03-14</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_014_btc_trend_sma</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-14 &rarr; 2026-03-14</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_003_fear_recovery</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-13 &rarr; 2026-03-13</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_btc_fear_reversal</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-12 &rarr; 2026-03-13</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_btc_fear_reversal</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-13 &rarr; 2026-03-13</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_ethbtc_pair_trade</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-13 &rarr; 2026-03-13</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_002_fear_btc_contrarian</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-12 &rarr; 2026-03-12</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>hypothesis</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_ethbtc_spread</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-12 &rarr; 2026-03-12</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_ethbtc_spread</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-12 &rarr; 2026-03-12</span></div><div style='color:#f44336;font-size:0.85em;margin-bottom:8px;'>Killed from <b>graveyard</b>: Backtest failed: Too few trades: 0 &lt; 8</div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>0</b></span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_001_ethbtc_stat_arb</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-12 &rarr; 2026-03-12</span></div></div>
+<div style='background:#16213e;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #f44336;'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'><b style='color:#e0e0e0;'>quant_primary_hyp_003_fear_greed_contrarian</b><span style='font-size:0.8em;color:#888;'>quant_primary &middot; 2026-03-11 &rarr; 2026-03-11</span></div><div style='font-size:0.82em;margin-bottom:4px;padding:4px 8px;background:#1a1a2e;border-radius:4px;'><span style='color:#81d4fa;font-weight:bold;margin-right:8px;'>Backtest</span><span style='margin-right:14px;'><span style='color:#888;'>Trades:</span> <b style='color:#e0e0e0;'>1</b></span></div></div>
+</div>
+
+</div>
+</div>
+
+<div class="section">
+<h2>Research Notes (30 total)</h2>
+<div class="tab-group">
+<input type="radio" name="research-tabs" id="research-tab-0" checked><label for="research-tab-0" class="tab-label">Active (3)</label>
+<input type="radio" name="research-tabs" id="research-tab-1"><label for="research-tab-1" class="tab-label">Archived (27)</label>
+<div class="tab-content"><table><tr><th>Note ID</th><th>Agent</th><th>Status</th><th>Age</th><th>Observation</th><th>Potential Edge</th></tr><tr><td>rn_019_fear_divergence_update_v3</td><td>quant_primary</td><td style='color:#4fc3f7;font-weight:bold'>research</td><td>6c</td><td>Fear &amp; Greed Index has been in Extreme Fear territory (16-23) for 10+ consecutive cycles while all crypto assets have de</td><td>Use F&amp;G Extreme Fear (&lt;25) as a regime gate that INCREASES position sizing or RE</td></tr>
+<tr><td>rn_020_ethbtc_statarb_staging</td><td>quant_primary</td><td style='color:#4fc3f7;font-weight:bold'>research</td><td>5c</td><td>ETH/BTC cointegration confirmed across multiple cycles (ADF p=0.0008, 540 observations). Current spread z-score = +0.23 </td><td>When ETH underperforms BTC significantly (z &lt; -1.5), buy ETH expecting mean reve</td></tr>
+<tr><td>rn_016_fear_divergence_momentum</td><td>quant_primary</td><td style='color:#4fc3f7;font-weight:bold'>research</td><td>9c</td><td>Fear &amp; Greed at 16 (Extreme Fear) for many cycles, yet BTC +4.6% and ETH +5.4% over 7 days. Rolling Sharpe for both is p</td><td>A momentum-following entry triggered by fear-price divergence could capture the </td></tr>
+</table></div>
+<div class="tab-content"><table><tr><th>Note ID</th><th>Agent</th><th>Status</th><th>Age</th><th>Observation</th><th>Potential Edge</th></tr><tr><td>rn_019_fear_divergence_update_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>6c</td><td>Fear &amp; Greed at 23 (Extreme Fear) while all assets gained 7-14% over 7 days. This divergence has persisted for ~10+ cycl</td><td>F&amp;G extreme fear + rising prices may be a REGIME SIGNAL (early-stage recovery, s</td></tr>
+<tr><td>rn_019_fear_divergence_update</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>4c</td><td>Fear &amp; Greed has been at Extreme Fear (15-16) for multiple cycles while all assets have gained 6-9% over 7 days. This di</td><td>If Fear &amp; Greed transitions from Extreme Fear to Fear (&gt;25) while prices are alr</td></tr>
+<tr><td>rn_013_capital_sizing_constraint</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>With $500 capital, pair trade at 40% per leg = $200 per leg. BTC $200 = 0.00276 BTC (above Kraken minimum). ETH $200 = 0</td><td>Confirming feasibility of pair trade execution</td></tr>
+<tr><td>rn_011_fear_divergence_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>Fear &amp; Greed Index at 18 (Extreme Fear) for multiple consecutive cycles. BTC price stabilized at ~$70k. Rolling Sharpe (</td><td>A contrarian long entry on BTC/ETH triggered by F&amp;G crossing from extreme fear (</td></tr>
+<tr><td>rn_012_hedge_ratio_discrepancy_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>ETH/BTC cointegration hedge ratio from OLS regression = 0.0484. Current ETH/BTC spot ratio = ~0.0293 (ETH ~$2052, BTC ~$</td><td>If the regression hedge ratio is stable, the pair trade is valid as structured. </td></tr>
+<tr><td>rn_007_ljungbox_missing_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>sir_007 (Ljung-Box) and sir_008 (ADF p-value) are both marked as &#x27;Shipped&#x27; in SYSTEM UPDATES, but cycle 6 autocorrelatio</td><td>If Ljung-Box confirms BTC lag 14-17 negative AC cluster is significant at p&lt;0.05</td></tr>
+<tr><td>rn_009_capital_zero_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>Capital remains $0.00 through cycle 6. Benchmarks are seeded and functioning ($495-500 range). The agent has no allocate</td><td>N/A — operational blocker not a trading edge</td></tr>
+<tr><td>rn_012_hedge_ratio_discrepancy</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>ETH/BTC cointegration hedge ratio discrepancy: prior cycles reported 0.0305-0.0306; this cycle returns 0.0484. Current E</td><td>Dynamic hedge ratio estimation may outperform fixed-ratio approaches</td></tr>
+<tr><td>rn_013_btc_lag15_oscillation</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>BTC/USD 4h autocorrelation consistently shows negative cluster at lags 14-17: lag14=-0.058, lag15=-0.104 (strongest), la</td><td>If lag-15 is significant (p&lt;0.05), a 60h mean-reversion signal could be construc</td></tr>
+<tr><td>rn_005_btc_4h_oscillation_invalidated</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>The BTC 4h oscillation pattern (negative autocorrelation at lags 8, 14, 16) that was documented in rn_005 through rn_005</td><td>None — pattern does not exist with correct data.</td></tr>
+<tr><td>rn_011_fear_divergence</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>Fear &amp; Greed Index has been at 15-18 (Extreme Fear) for all 3 cycles while BTC price has stabilized around $69.3-69.7k (</td><td>Contrarian long entry when extreme fear persists but price stops declining. Hist</td></tr>
+<tr><td>rn_009_capital_zero_blocker</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>Capital allocated is $0.00 across all cycles so far. Benchmarks are seeded at $500 each but agent capital remains zero. </td><td>N/A — this is a system blocker, not a trading opportunity</td></tr>
+<tr><td>rn_010_altcoin_independent_alpha</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>All 5 monitored pairs (BTC, ETH, SOL, AVAX, LINK) show 0.85-0.96 pairwise correlation with BTC at 4h/90d. No independent</td><td>Alt-specific signal (on-chain, protocol TVL, relative strength vs BTC) could ide</td></tr>
+<tr><td>rn_005_btc_4h_oscillation_v3</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>BTC/USD 4h return autocorrelation consistently shows negative values at lags 8 (-0.186), 14 (-0.159), and 16 (-0.271) ac</td><td>If the lag-16 negative autocorrelation is statistically significant (not noise),</td></tr>
+<tr><td>rn_008_extreme_fear_contrarian</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>Fear &amp; Greed Index at 15 (Extreme Fear) for multiple consecutive days. BTC rolling Sharpe recently hit -22 (annualized, </td><td>When Fear &amp; Greed &lt; 20 AND BTC rolling Sharpe (14d) has crossed from deeply nega</td></tr>
+<tr><td>rn_006_ethbtc_trend_v3</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>ETH/BTC cointegration analysis (4h, 90d) re-confirmed this cycle: hedge ratio = 0.0306, half-life = 7.72 x 4h periods (~</td><td>If spread is confirmed stationary (ADF p &lt; 0.05): pairs trade fading ETH/BTC spr</td></tr>
+<tr><td>rn_007_ljungbox_missing</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>Two system improvements (sir_007 Ljung-Box p-values, sir_008 ADF p-value) are marked &#x27;Shipped&#x27; but both are returning em</td><td>N/A — this is a system health note, not a trading opportunity</td></tr>
+<tr><td>rn_005_btc_4h_oscillation_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>BTC/USD 4h return autocorrelation confirmed: lag 8 = -0.186, lag 14 = -0.158, lag 16 = -0.271. Pattern suggests a ~64-ho</td><td>If lag-16 negative autocorrelation is statistically significant, a contrarian st</td></tr>
+<tr><td>rn_006_ethbtc_trend_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>ETH/BTC cointegration: hedge ratio 0.0305, lag-1 spread autocorrelation = 0.915 (very persistent), half-life = 7.79 x 4h</td><td>ETH/BTC spread mean reversion at extreme deviations. Enter long ETH/short BTC (o</td></tr>
+<tr><td>rn_005_btc_4h_oscillation</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>BTC/USD 4h return autocorrelation shows a cluster of negative values at lags 8, 14, and 16 (values: -0.185, -0.157, -0.2</td><td>If BTC exhibits a genuine ~64h oscillation, a counter-trend signal fired at extr</td></tr>
+<tr><td>rn_006_ethbtc_trend</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>Prior research note rn_001/rn_001_v2 hypothesized ETH/BTC mean reversion. Cointegration data now shows: hedge ratio 0.03</td><td>Trend-following on ETH/BTC ratio: when the ratio is making new N-period lows wit</td></tr>
+<tr><td>rn_001_eth_btc_ratio_v2</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>10c</td><td>ETH/BTC ratio at ~0.0292 (multi-year lows). Cointegration confirmed (hedge ratio 0.0305) but spread residual lag-1 autoc</td><td>Trend-following the ETH/BTC ratio rather than mean-reverting it. Long ETH/short </td></tr>
+<tr><td>rn_003_btc_trend_timing</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>0c</td><td>All 5 pairs have 0.85-0.96 correlation to BTC at 4h/90d. This confirms a single dominant factor structure. In this envir</td><td>BTC trend-following strategy using multi-timeframe momentum (e.g., 4h + 1d align</td></tr>
+<tr><td>rn_004_btc_dominance_altcoin_beta</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>1c</td><td>Updating rn_004 from prior cycle with new correlation data. BTC-ETH correlation 0.945, BTC-SOL 0.887, BTC-AVAX 0.848, BT</td><td>Dynamic beta allocation: when BTC trend is confirmed up, overweight higher-beta </td></tr>
+<tr><td>rn_001_eth_btc_ratio</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>2c</td><td>ETH/BTC ratio is approximately 0.0291 as of Cycle 3 (ETH ~$2025, BTC ~$69,722). This is near multi-year lows — the ratio</td><td>If ETH/BTC is cointegrated with a finite mean-reversion half-life (ideally 24-96</td></tr>
+<tr><td>rn_002_avax_vol_anomaly</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>2c</td><td>AVAX/USD vol score has been at or near 100 for all 3 cycles while the actual 1h candle range is $0.04-0.05 (approximatel</td><td>If AVAX is genuinely in a low-liquidity, low-price regime with compressed ranges</td></tr>
+<tr><td>rn_003_high_vol_regime_strategy_selection</td><td>quant_primary</td><td style='color:#f44336;font-weight:bold'>abandoned</td><td>2c</td><td>All 5 pairs show vol scores 64-100 across cycles 1-3. This is a uniformly elevated vol environment with no clear regime </td><td>In high-vol regimes with BTC dominance, two historically reliable approaches: (1</td></tr>
+</table></div>
+
 </div>
 </div>
 
@@ -69,35 +267,86 @@
 </div>
 
 <div class="section">
-<h2>Strategy Lifecycle</h2>
-<table>
-<tr><th>Strategy</th><th>Agent</th><th>Namespace</th><th>Stage</th><th>Created</th><th>Updated</th></tr>
-<tr><td colspan='6'>No strategies registered</td></tr>
-</table>
-</div>
+<h2>Operations</h2>
+<div class="tab-group">
+<input type="radio" name="ops-tabs" id="ops-tab-0" checked><label for="ops-tab-0" class="tab-label">Failed Cycles (20)</label>
+<input type="radio" name="ops-tabs" id="ops-tab-1"><label for="ops-tab-1" class="tab-label">Risk Gate (2)</label>
+<input type="radio" name="ops-tabs" id="ops-tab-2"><label for="ops-tab-2" class="tab-label">SIRs (28)</label>
+<input type="radio" name="ops-tabs" id="ops-tab-3"><label for="ops-tab-3" class="tab-label">Owner Requests (8)</label>
+<input type="radio" name="ops-tabs" id="ops-tab-4"><label for="ops-tab-4" class="tab-label">Messages (0)</label>
+<div class="tab-content"><table><tr><th>Time</th><th>Agent</th><th>Cycle</th><th>Model</th><th>Error</th></tr><tr><td>2026-03-16T16:49</td><td>quant_primary</td><td>24</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-16T16:49</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>JSON parse failure</td></tr>
+<tr><td>2026-03-15T21:09</td><td>quant_primary</td><td>21</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-15T21:09</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-15T07:01</td><td>quant_primary</td><td>18</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-15T07:01</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-15T00:59</td><td>quant_primary</td><td>17</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-15T00:59</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-14T18:52</td><td>quant_primary</td><td>15</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-14T18:52</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-14T12:50</td><td>quant_primary</td><td>14</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-14T12:50</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-14T06:42</td><td>quant_primary</td><td>12</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-14T06:42</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-14T00:41</td><td>quant_primary</td><td>11</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-14T00:41</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-12T11:49</td><td>quant_primary</td><td>4</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-12T11:49</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+<tr><td>2026-03-12T03:44</td><td>quant_primary</td><td>2</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Agent call returned None (API error or parse failure)</td></tr>
+<tr><td>2026-03-12T03:44</td><td>quant_primary</td><td>0</td><td>claude-sonnet-4-6</td><td style='color:#f44336'>Max tool iterations reached, JSON parse failure</td></tr>
+</table></div>
+<div class="tab-content"><table><tr><th>ID</th><th>Time</th><th>Agent</th><th>Type</th><th>Status</th><th>Reason</th></tr><tr><td>2</td><td>2026-03-13T18:39</td><td>quant_primary</td><td>benchmark_action</td><td class=''>executed</td><td>non-signal instruction, no risk check required</td></tr>
+<tr><td>1</td><td>2026-03-12T18:11</td><td>quant_primary</td><td>benchmark_action</td><td class=''>executed</td><td>non-signal instruction, no risk check required</td></tr>
+</table></div>
+<div class="tab-content"><table><tr><th>ID</th><th>Date</th><th>Agent</th><th>Category</th><th>Priority</th><th>Status</th><th>Title</th><th>Problem</th></tr><tr><td>sir_028_memory_encoding_on_restart</td><td>2026-03-16</td><td>quant_primary</td><td>bug_fix</td><td>high</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Ensure cycle memory is encoded to long-term storage before process exit / restar</td><td>After 2 system restarts, all memory queries return empty. My long-term memory (memvid) was not updat</td></tr>
+<tr><td>sir_027_hypothesis_resubmission_detection</td><td>2026-03-16</td><td>quant_primary</td><td>digest_improvement</td><td>high</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Detect and warn when a hypothesis_id already exists in the system before process</td><td>After system restarts, the backtest queue is empty but strategy files may still exist from prior sub</td></tr>
+<tr><td>sir_026_strategy_state_position_tracking</td><td>2026-03-16</td><td>quant_primary</td><td>bug_fix</td><td>high</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Strategy needs reliable position tracking when state not persisted (sir_024 work</td><td>sir_024 (strategy state persistence) is pending. Until it ships, the ETH/BTC rotation strategy (hyp_</td></tr>
+<tr><td>sir_025_ema_in_analysis_tool</td><td>2026-03-16</td><td>quant_primary</td><td>tool_enhancement</td><td>normal</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>No EMA/SMA computation available via run_analysis tool</td><td>I frequently need to check whether current price is above/below a moving average to assess regime or</td></tr>
+<tr><td>sir_024_strategy_state_persistence</td><td>2026-03-16</td><td>quant_primary</td><td>bug_fix</td><td>high</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Strategy instance state (self._position_pair etc.) not persisted between cycles</td><td>BaseStrategy subclasses use instance variables to track open position state (e.g. self._position_pai</td></tr>
+<tr><td>sir_023_spread_zscore_history</td><td>2026-03-15</td><td>quant_primary</td><td>digest_improvement</td><td>normal</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Include historical z-score time series in digest for active pair trade research </td><td>The digest currently shows only the current z-score for cointegrated pairs (e.g., ETH/BTC z=+0.23 to</td></tr>
+<tr><td>sir_022_fear_greed_backtest_feed</td><td>2026-03-15</td><td>quant_primary</td><td>data_pipeline</td><td>high</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Fear &amp; Greed Index data available in backtest engine for strategy testing</td><td>quant_primary_hyp_020_fear_divergence_momentum requires fear_greed_index:1d as a required feed. The </td></tr>
+<tr><td>sir_021_spread_zscore_trigger</td><td>2026-03-13</td><td>quant_primary</td><td>new_tool</td><td>normal</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Conditional wake trigger on cointegration spread z-score crossing threshold</td><td>For hyp_002 (ETH/BTC rotation), I need to enter when the spread z-score crosses ±1.5. Currently z=+0</td></tr>
+<tr><td>sir_020_fear_greed_trigger</td><td>2026-03-13</td><td>quant_primary</td><td>new_tool</td><td>normal</td><td style='color:#d4a017;font-weight:bold'>pending</td><td>Conditional wake trigger on Fear &amp; Greed Index directional change</td><td>I need to be woken immediately when the Fear &amp; Greed Index changes direction — specifically when it </td></tr>
+<tr><td>sir_019_fear_greed_historical_blocking</td><td>2026-03-13</td><td>quant_primary</td><td>data_pipeline</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Fear &amp; Greed 90-day historical data needed in backtest engine</td><td>The fear reversal strategy (hyp_002) uses Fear &amp; Greed Index as a primary entry signal. The backtest</td></tr>
+<tr><td>sir_018_spread_zscore_in_digest</td><td>2026-03-12</td><td>quant_primary</td><td>digest_improvement</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Include cointegrated spread z-scores in digest for active pair trade hypotheses</td><td>For strategies based on spread z-scores (like hyp_001_ethbtc_spread), I need to know the current z-s</td></tr>
+<tr><td>sir_017_fear_greed_dedup</td><td>2026-03-12</td><td>quant_primary</td><td>digest_improvement</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Fear &amp; Greed feed appearing 21 times per digest</td><td>The supplementary feeds section shows the fear_greed_index value repeated 21 times in this cycle&#x27;s d</td></tr>
+<tr><td>sir_016_fear_greed_historical</td><td>2026-03-12</td><td>quant_primary</td><td>data_pipeline</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Fear &amp; Greed historical feed (90d) not available via digest</td><td>The digest currently shows only the current Fear &amp; Greed value (single daily reading). I cannot comp</td></tr>
+<tr><td>sir_015_strategy_backtest_confirmation</td><td>2026-03-12</td><td>quant_primary</td><td>digest_improvement</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>No confirmation that strategy files submitted via write_strategy_code tool are p</td><td>I submitted two strategy files via the write_strategy_code tool (quant_primary_hyp_001_ethbtc_statar</td></tr>
+<tr><td>sir_014_rolling_sharpe_annualization</td><td>2026-03-11</td><td>quant_primary</td><td>bug_fix</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Rolling Sharpe values appear to be annualized at 4h resolution but are very larg</td><td>The rolling Sharpe output for BTC/USD 4h with 14-day window shows values like -22 and +15. These are</td></tr>
+<tr><td>sir_013_strategy_code_generation</td><td>2026-03-11</td><td>quant_primary</td><td>new_tool</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Strategy code modules are not being auto-generated or validated when hypotheses </td><td>When I submit a hypothesis with a code_module path, the system needs to either (a) generate the Pyth</td></tr>
+<tr><td>sir_012_cointegration_observation_count</td><td>2026-03-11</td><td>quant_primary</td><td>data_pipeline</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Cointegration analysis on 4h/90d data returns only 105 observations instead of e</td><td>Running cointegration analysis on ETH/USD vs BTC/USD at 4h timeframe with 90-day lookback returns n_</td></tr>
+<tr><td>sir_011_adf_ljungbox_regression</td><td>2026-03-11</td><td>quant_primary</td><td>bug_fix</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>ADF p-value and Ljung-Box p-values are returning null/empty despite being marked</td><td>sir_007 (Ljung-Box) and sir_008 (ADF) are marked &#x27;Shipped&#x27; in SYSTEM UPDATES but both are returning </td></tr>
+<tr><td>sir_010_capital_status_clarity</td><td>2026-03-11</td><td>quant_primary</td><td>digest_improvement</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Digest should clarify when capital seeding is expected vs permanently $0</td><td>Capital shows $0.00 (100% of $0.00). I cannot tell if this is: (a) system not yet funded — capital c</td></tr>
+<tr><td>sir_009_digest_dedup</td><td>2026-03-11</td><td>quant_primary</td><td>bug_fix</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Prediction market data is appearing 5x duplicated in digest</td><td>The MARKET CONDITIONS section of the digest shows the Polymarket prediction market block repeated 5 </td></tr>
+<tr><td>sir_008_cointegration_adf_pvalue</td><td>2026-03-11</td><td>quant_primary</td><td>tool_enhancement</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Cointegration analysis should return ADF test p-value and half-life</td><td>The cointegration tool returns a mean_reversion_score (0.0424) and lag-1 autocorrelation (0.915) but</td></tr>
+<tr><td>sir_007_ljung_box_pvalues</td><td>2026-03-11</td><td>quant_primary</td><td>tool_enhancement</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Autocorrelation analysis should return Ljung-Box p-values</td><td>The autocorrelation tool returns raw autocorrelation coefficients at each lag, but does not return L</td></tr>
+<tr><td>sir_006_rolling_beta_analysis</td><td>2026-03-11</td><td>quant_primary</td><td>new_tool</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>No tool for computing rolling beta between a pair and a reference asset</td><td>I need to compute rolling return beta of ETH, SOL, AVAX, LINK versus BTC as a reference. Current cor</td></tr>
+<tr><td>sir_005_multi_pair_analysis_bug</td><td>2026-03-11</td><td>quant_primary</td><td>bug_fix</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Multi-pair autocorrelation and distribution analysis fail with binding error</td><td>When calling run_analysis with analysis_type &#x27;autocorrelation&#x27; or &#x27;distribution&#x27; with more than one </td></tr>
+<tr><td>sir_004_price_history_in_digest</td><td>2026-03-11</td><td>quant_primary</td><td>digest_improvement</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Digest shows only latest 1h candle — no price history visible without running an</td><td>The MARKET CONDITIONS section shows only the most recent 1h OHLCV candle per pair. This means I cann</td></tr>
+<tr><td>sir_003_benchmark_seeding</td><td>2026-03-11</td><td>quant_primary</td><td>data_pipeline</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Benchmarks show n/a — need seeding confirmation</td><td>All 4 system benchmarks (hodl_btc, hodl_eth, dca_btc, equal_weight_rebal) show n/a for 24h/7d/30d pe</td></tr>
+<tr><td>sir_002_vol_score_methodology</td><td>2026-03-11</td><td>quant_primary</td><td>digest_improvement</td><td>normal</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Volatility score methodology is undocumented — cannot interpret values</td><td>AVAX/USD shows a vol score of 100.0 (maximum) while its 1h candle range is only $0.03 (0.3%). This c</td></tr>
+<tr><td>sir_001_analysis_engine</td><td>2026-03-11</td><td>quant_primary</td><td>analysis_capability</td><td>high</td><td style='color:#4CAF50;font-weight:bold'>shipped</td><td>Analysis engine returns placeholder results — no statistical computation availab</td><td>Every call to run_analysis returns {results: {}, note: &#x27;Analysis engine not yet implemented. Real re</td></tr>
+</table></div>
+<div class="tab-content"><table><tr><th>ID</th><th>Date</th><th>Agent</th><th>Type</th><th>Urgency</th><th>Status</th><th>Title</th><th>Description</th></tr><tr><td>owner_req_001_kraken_margin</td><td>2026-03-13</td><td>quant_primary</td><td>judgment_call</td><td style='color:#d4a017;font-weight:bold'>high</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Confirm Kraken margin trading availability for ETH/BTC pair trade</td><td>The ETH/BTC pair trade (hyp_001) requires shorting BTC while holding ETH long to be market-neutral. </td></tr>
+<tr><td>owner_001_capital_seeding</td><td>2026-03-12</td><td>quant_primary</td><td>judgment_call</td><td style='color:#888;font-weight:bold'>blocking</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Agent capital is $0 — cannot paper trade or go live</td><td>This agent has had $0.00 capital allocation for all 6 cycles. Benchmarks are funded ($500 each) and </td></tr>
+<tr><td>or_001_capital_seeding</td><td>2026-03-12</td><td>quant_primary</td><td>judgment_call</td><td style='color:#d4a017;font-weight:bold'>high</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Agent capital is $0.00 — is capital seeding expected or a config issue?</td><td>Quant_primary has run 5 cycles with $0.00 capital allocated. Benchmarks are seeded at $500 and perfo</td></tr>
+<tr><td>or_001_capital_allocation</td><td>2026-03-12</td><td>quant_primary</td><td>judgment_call</td><td style='color:#888;font-weight:bold'>blocking</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Agent capital is $0.00 — cannot trade, backtest, or paper trade</td><td>Capital allocated has been $0.00 for all 3 cycles. Benchmarks are seeded at $500 each but the agent </td></tr>
+<tr><td>req_001_capital_seeding</td><td>2026-03-11</td><td>quant_primary</td><td>judgment_call</td><td style='color:#888;font-weight:bold'>blocking</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Capital is $0.00 — agent cannot paper trade or execute</td><td>The agent has capital allocated of $0.00 across all cycles. Benchmarks are seeded at $500 each and t</td></tr>
+<tr><td>owner_001_capital_seeding</td><td>2026-03-11</td><td>quant_primary</td><td>judgment_call</td><td style='color:#d4a017;font-weight:bold'>high</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Capital still $0 after 2 cycles — when is funding expected?</td><td>Both cycles have shown $0.00 capital allocated. All strategy infrastructure (hypotheses, backtests) </td></tr>
+<tr><td>or_001_capital_status</td><td>2026-03-11</td><td>quant_primary</td><td>judgment_call</td><td style='color:#d4a017;font-weight:bold'>high</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>Capital allocation is $0 — system not funded</td><td>The digest shows Capital allocated: $0.00. No trading (live or paper) is possible without capital. I</td></tr>
+<tr><td>or_001_capital_allocation</td><td>2026-03-11</td><td>quant_primary</td><td>judgment_call</td><td style='color:#d4a017;font-weight:bold'>high</td><td style='color:#4CAF50;font-weight:bold'>resolved</td><td>No capital allocated — system shows $0.00. Is funding pending?</td><td>The digest shows Capital allocated: $0.00 (100% of $0.00). The system is running but has no capital </td></tr>
+</table></div>
+<div class="tab-content"><table><tr><th>Time</th><th>From</th><th>To</th><th>Type</th><th>Priority</th><th>Status</th></tr><tr><td colspan=6>No messages</td></tr></table></div>
 
-<div class="section">
-<h2>Risk Gate Log</h2>
-<table>
-<tr><th>ID</th><th>Time</th><th>Agent</th><th>Type</th><th>Status</th><th>Reason</th></tr>
-<tr><td colspan='6'>No instructions processed</td></tr>
-</table>
 </div>
-
-<div class="section">
-<h2>Agent Messages</h2>
-<table>
-<tr><th>Time</th><th>From</th><th>To</th><th>Type</th><th>Priority</th><th>Status</th></tr>
-<tr><td colspan='6'>No messages</td></tr>
-</table>
 </div>
 
 <div class="section">
 <h2>Supplementary Feeds</h2>
 <table>
 <tr><th>Feed</th><th>Value</th><th>Timestamp</th><th>Source</th></tr>
-<tr><td>fear_greed_index</td><td>15.0000</td><td>2026-03-11T00:00</td><td>alternative.me</td></tr>
-<tr><td>polymarket</td><td>0.4885</td><td>2026-03-11T16:49</td><td>polymarket.com</td></tr>
+<tr><td>fear_greed_index</td><td>23.0000</td><td>2026-03-16T00:00</td><td>alternative.me</td></tr>
+<tr><td>polymarket</td><td>0.4850</td><td>2026-03-16T21:38</td><td>polymarket.com</td></tr>
 
 </table>
 </div>
