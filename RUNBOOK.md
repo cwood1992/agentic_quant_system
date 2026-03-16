@@ -67,7 +67,9 @@ Procedures for operating the agentic quant trading system.
    ```bash
    python main.py
    ```
-   Watch logs for `Wake controller started`. The system is now running.
+   Watch logs for `Wake controller started` and `Dashboard server started`. The system is now running.
+
+   The dashboard is available at `http://localhost:8501`. For remote access from other machines, ensure port 8501 is open in your firewall.
 
 ---
 
@@ -75,7 +77,30 @@ Procedures for operating the agentic quant trading system.
 
 ### Monitoring
 - **Logs:** `logs/system.log` (JSON format, rotated daily, 30-day retention)
-- **Dashboard:** Regenerate with:
+- **Dashboard:** Automatically served at `http://localhost:8501` when the system is running. Access from any machine on the network via `http://<host-ip>:8501`. The page auto-refreshes every 60 seconds.
+
+  Dashboard sections:
+  - **Strategy Lifecycle Funnel** — visual count at each stage (hypothesis / backtest / robustness / paper / live / graveyard)
+  - **Equity Curve** — portfolio value over time
+  - **Research Notes** — all notes with status, age, observation, potential edge
+  - **Backtest & Robustness Results** — per-strategy metrics (return, Sharpe, drawdown, win rate, robustness percentiles)
+  - **Graveyard Analysis** — killed strategies with reasons and failure type distribution
+  - **Recent Trades, Risk Gate Log, Agent Messages, Supplementary Feeds, Failed Cycles**
+
+  Configuration in `config.yaml`:
+  ```yaml
+  dashboard:
+    enabled: true
+    host: "0.0.0.0"    # bind to all interfaces for remote access
+    port: 8501
+  ```
+
+  API endpoints:
+  - `GET /` — dashboard HTML
+  - `GET /api/state` — system state as JSON
+  - `GET /health` — health check
+
+  To manually regenerate the dashboard without restarting:
   ```bash
   python -c "
   from dashboard.generator import generate_dashboard
@@ -83,7 +108,6 @@ Procedures for operating the agentic quant trading system.
   generate_dashboard('data/system.db', load_config())
   "
   ```
-  Open `dashboard/index.html` in a browser.
 - **Telegram:** `/status` shows a live summary
 
 ### Checking API Budget
@@ -176,6 +200,23 @@ Paper trades fill at the next available price. If the order book is stale, fills
 ```bash
 grep "DataCollector" logs/system.log | tail -5
 ```
+
+### Dashboard not loading
+1. Verify the system is running (`python main.py`)
+2. Check for port conflicts — another process may be using port 8501:
+   ```bash
+   # Linux/macOS:
+   lsof -i :8501
+   # Windows (PowerShell):
+   netstat -ano | findstr :8501
+   ```
+3. Change the port in `config.yaml` under `dashboard.port` if needed
+4. Check logs for `Dashboard server started` — if missing, the server failed to bind
+
+### Dashboard shows stale data
+1. Verify agent cycles are completing — check `STATE.md` for the last updated timestamp
+2. The dashboard regenerates after each cycle; if cycles are failing, data won't update
+3. Check `logs/system.log` for `Dashboard generation failed` errors
 
 ### High API costs
 1. Check per-agent usage: query `api_usage` table grouped by agent_id

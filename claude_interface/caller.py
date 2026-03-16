@@ -49,6 +49,7 @@ def select_model(
 def _log_failed_cycle(
     agent_id: str,
     db_path: str,
+    cycle: int,
     raw_output: str,
     error: str,
     wake_reason: str,
@@ -60,9 +61,10 @@ def _log_failed_cycle(
         conn.execute(
             """INSERT INTO failed_cycles
                (agent_id, cycle, timestamp, raw_output, error, wake_reason, model_used)
-               VALUES (?, 0, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 agent_id,
+                cycle,
                 datetime.now(timezone.utc).isoformat(),
                 raw_output,
                 error,
@@ -144,7 +146,7 @@ def call_agent(
     except FileNotFoundError:
         logger.error("Brief file not found: %s", brief_path)
         _log_failed_cycle(
-            agent_id, db_path, "", f"Brief not found: {brief_path}", wake_reason, ""
+            agent_id, db_path, cycle_number, "", f"Brief not found: {brief_path}", wake_reason, ""
         )
         return None
 
@@ -155,15 +157,19 @@ def call_agent(
 
     client = anthropic.Anthropic()
 
+    # Read max tool iterations from agent config, falling back to module constant
+    max_iterations = agent_config.get("max_tool_iterations", MAX_TOOL_ITERATIONS)
+
     logger.info(
-        "Calling agent model=%s wake_reason=%s tools=%d",
+        "Calling agent model=%s wake_reason=%s tools=%d max_iterations=%d",
         model,
         wake_reason,
         len(tools),
+        max_iterations,
     )
 
     response = None
-    for iteration in range(MAX_TOOL_ITERATIONS + 1):
+    for iteration in range(max_iterations + 1):
         try:
             response = client.messages.create(
                 model=model,
@@ -181,13 +187,13 @@ def call_agent(
         except anthropic.APIError as exc:
             logger.error("Anthropic API error: %s", exc, exc_info=True)
             _log_failed_cycle(
-                agent_id, db_path, "", str(exc), wake_reason, model
+                agent_id, db_path, cycle_number, "", str(exc), wake_reason, model
             )
             return None
         except Exception as exc:
             logger.error("Unexpected error calling Claude API: %s", exc, exc_info=True)
             _log_failed_cycle(
-                agent_id, db_path, "", str(exc), wake_reason, model
+                agent_id, db_path, cycle_number, "", str(exc), wake_reason, model
             )
             return None
 
@@ -214,7 +220,7 @@ def call_agent(
             if parsed is None:
                 logger.warning("Failed to parse JSON from agent response")
                 _log_failed_cycle(
-                    agent_id, db_path, text, "JSON parse failure", wake_reason, model
+                    agent_id, db_path, cycle_number, text, "JSON parse failure", wake_reason, model
                 )
             return parsed
 
@@ -231,6 +237,21 @@ def call_agent(
 
             tool_results = execute_tool_calls(tool_use_blocks, agent_id, db_path)
 
+            # Tell the agent how many tool calls remain so it can budget
+            remaining = max_iterations - (iteration + 1)
+            if remaining <= 3:
+                if remaining > 0:
+                    budget_msg = (
+                        f"[SYSTEM: You have {remaining} tool call(s) remaining this cycle. "
+                        f"Plan to emit your final JSON output soon.]"
+                    )
+                else:
+                    budget_msg = (
+                        "[SYSTEM: You have 0 tool calls remaining. "
+                        "Your next response MUST be your final JSON output — no more tool calls.]"
+                    )
+                tool_results.append({"type": "text", "text": budget_msg})
+
             # Append assistant response and tool results to conversation
             messages.append({"role": "assistant", "content": response.content})
             messages.append({"role": "user", "content": tool_results})
@@ -240,22 +261,63 @@ def call_agent(
         logger.warning("Unexpected stop_reason: %s", response.stop_reason)
         break
 
-    # Exhausted iterations or unexpected stop — return whatever text is available
+    # Exhausted iterations — give the agent one final chance to produce JSON
+    if response is not None and response.stop_reason == "tool_use":
+        logger.warning(
+            "Reached max tool iterations (%d). Sending wrap-up prompt.",
+            max_iterations,
+        )
+        # Append the last assistant response (tool_use blocks)
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append({
+            "role": "user",
+            "content": (
+                "You have reached the maximum number of tool calls for this cycle. "
+                "Do NOT request any more tools. Produce your final JSON output now "
+                "based on the analysis you have completed so far."
+            ),
+        })
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                system=[
+                    {
+                        "type": "text",
+                        "text": brief,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=messages,
+                tools=None,  # No tools — force text output
+            )
+            try:
+                APIBudgetTracker(db_path).track_usage(
+                    agent_id=agent_id,
+                    cycle=cycle_number,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    model=model,
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.error("Wrap-up API call failed: %s", exc)
+            _log_failed_cycle(
+                agent_id, db_path, cycle_number, "",
+                f"Wrap-up call failed: {exc}", wake_reason, model,
+            )
+            return None
+
+    # Extract text from whatever response we have
     if response is not None:
         text = _extract_text(response)
-        logger.warning(
-            "Reached max tool iterations (%d). Forcing response extraction.",
-            MAX_TOOL_ITERATIONS,
-        )
         parsed = _parse_json_response(text)
         if parsed is None:
+            logger.warning("Failed to parse JSON from final response")
             _log_failed_cycle(
-                agent_id,
-                db_path,
-                text,
-                "Max tool iterations reached, JSON parse failure",
-                wake_reason,
-                model,
+                agent_id, db_path, cycle_number, text,
+                "JSON parse failure after wrap-up", wake_reason, model,
             )
         return parsed
 

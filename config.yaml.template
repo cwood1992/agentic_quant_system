@@ -147,6 +147,12 @@ system_improvements:
   max_requests_per_agent_per_cycle: 3
   auto_decline_after_weeks: 8
 
+# === Dashboard ===
+dashboard:
+  enabled: true
+  host: "0.0.0.0"                       # bind to all interfaces for remote access
+  port: 8501
+
 # === Logging ===
 logging:
   level: INFO

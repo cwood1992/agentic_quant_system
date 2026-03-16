@@ -997,19 +997,23 @@ class DigestBuilder:
 
     def build_prior_cycle_notes_section(self, agent_id: str) -> str:
         """Retrieve the most recent cycle_notes from the events table."""
-        row = self.conn.execute(
-            "SELECT payload FROM events "
-            "WHERE agent_id = ? AND event_type = 'cycle_notes' "
-            "ORDER BY timestamp DESC LIMIT 1",
-            (agent_id,),
-        ).fetchone()
-        if not row:
-            return ""
+        conn = get_db(self.db_path)
         try:
-            data = json.loads(row["payload"])
-            return data.get("cycle_notes", "")
-        except (json.JSONDecodeError, TypeError):
-            return row["payload"] if row["payload"] else ""
+            row = conn.execute(
+                "SELECT payload FROM events "
+                "WHERE agent_id = ? AND event_type = 'cycle_notes' "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (agent_id,),
+            ).fetchone()
+            if not row:
+                return ""
+            try:
+                data = json.loads(row["payload"])
+                return data.get("cycle_notes", "")
+            except (json.JSONDecodeError, TypeError):
+                return row["payload"] if row["payload"] else ""
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # 11. Requested analysis section (pre-computed z-scores)

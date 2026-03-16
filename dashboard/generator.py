@@ -1,8 +1,9 @@
 """Dashboard generator for the agentic quant trading system.
 
 Produces a single-file HTML dashboard with inline CSS/JS. Sections cover
-equity curves, strategy lifecycle, risk gate log, agent messages, and
-supplementary feeds.
+equity curves, strategy lifecycle funnel, research notes, backtest &
+robustness results, graveyard analysis, risk gate log, agent messages,
+supplementary feeds, and failed cycles.
 """
 
 import json
@@ -35,11 +36,19 @@ def generate_dashboard(
     # --- Gather data ---
     equity_data = _get_equity_data(conn)
     strategies = _get_strategies(conn)
+    research_notes = _get_research_notes(conn)
+    backtest_results = _get_backtest_results(conn)
+    graveyard = _get_graveyard(conn)
+    failed_cycles = _get_failed_cycles(conn)
+    funnel = _get_strategy_funnel(conn)
     risk_log = _get_risk_log(conn)
     messages = _get_messages(conn)
     feeds = _get_feeds(conn)
     trades = _get_recent_trades(conn)
     system_state = _get_system_state(conn)
+    agent_summaries = _get_agent_summaries(conn, config)
+    sirs = _get_sirs(conn)
+    owner_requests = _get_owner_requests(conn)
 
     conn.close()
 
@@ -49,11 +58,19 @@ def generate_dashboard(
     html = _build_html(
         equity_data=equity_data,
         strategies=strategies,
+        research_notes=research_notes,
+        backtest_results=backtest_results,
+        graveyard=graveyard,
+        failed_cycles=failed_cycles,
+        funnel=funnel,
         risk_log=risk_log,
         messages=messages,
         feeds=feeds,
         trades=trades,
         system_state=system_state,
+        agent_summaries=agent_summaries,
+        sirs=sirs,
+        owner_requests=owner_requests,
         config=config,
         generated_at=generated_at,
     )
@@ -99,6 +116,78 @@ def _get_strategies(conn) -> list[dict]:
         "FROM strategy_registry ORDER BY updated_at DESC"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _get_research_notes(conn) -> list[dict]:
+    """Get all research notes."""
+    rows = conn.execute(
+        "SELECT note_id, agent_id, status, observation, potential_edge, "
+        "age_cycles, created_at FROM research_notes "
+        "ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_backtest_results(conn) -> list[dict]:
+    """Get strategies that have backtest or robustness results."""
+    rows = conn.execute(
+        "SELECT strategy_id, agent_id, stage, backtest_results, robustness_results "
+        "FROM strategy_registry "
+        "WHERE backtest_results IS NOT NULL AND backtest_results != ''"
+    ).fetchall()
+    results = []
+    for r in rows:
+        entry = dict(r)
+        # Parse JSON fields
+        for field in ("backtest_results", "robustness_results"):
+            if entry.get(field):
+                try:
+                    entry[field] = json.loads(entry[field])
+                except (json.JSONDecodeError, TypeError):
+                    entry[field] = None
+            else:
+                entry[field] = None
+        results.append(entry)
+    return results
+
+
+def _get_graveyard(conn) -> list[dict]:
+    """Get graveyard strategies with kill reasons."""
+    rows = conn.execute(
+        "SELECT strategy_id, agent_id, config, backtest_results, updated_at, created_at "
+        "FROM strategy_registry WHERE stage = 'graveyard' "
+        "ORDER BY updated_at DESC"
+    ).fetchall()
+    results = []
+    for r in rows:
+        entry = dict(r)
+        cfg = {}
+        if entry.get("config"):
+            try:
+                cfg = json.loads(entry["config"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        entry["kill_reason"] = cfg.get("kill_reason", "unknown")
+        entry["killed_from_stage"] = cfg.get("killed_from_stage", "unknown")
+        results.append(entry)
+    return results
+
+
+def _get_failed_cycles(conn) -> list[dict]:
+    """Get recent failed cycles."""
+    rows = conn.execute(
+        "SELECT agent_id, cycle, timestamp, error, model_used "
+        "FROM failed_cycles ORDER BY timestamp DESC LIMIT 20"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_strategy_funnel(conn) -> dict[str, int]:
+    """Get strategy count by stage."""
+    rows = conn.execute(
+        "SELECT stage, COUNT(*) as cnt FROM strategy_registry GROUP BY stage"
+    ).fetchall()
+    return {r["stage"]: r["cnt"] for r in rows}
 
 
 def _get_risk_log(conn) -> list[dict]:
@@ -154,6 +243,125 @@ def _get_system_state(conn) -> dict:
     return result
 
 
+def _get_agent_summaries(conn, config: dict) -> list[dict]:
+    """Build per-agent summary data (mirroring STATE.md content)."""
+    agents_cfg = config.get("agents", {})
+    enabled_agents = [
+        aid for aid, acfg in agents_cfg.items()
+        if isinstance(acfg, dict) and acfg.get("enabled", False)
+    ]
+    summaries = []
+    for agent_id in enabled_agents:
+        acfg = agents_cfg[agent_id]
+
+        # Status
+        status_row = conn.execute(
+            "SELECT value FROM system_state WHERE key = ?",
+            (f"agent_status_{agent_id}",),
+        ).fetchone()
+        status = "active"
+        if status_row:
+            try:
+                status = json.loads(status_row["value"]).get("status", "active")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Cycle count
+        cycle_row = conn.execute(
+            "SELECT MAX(cycle) as max_cycle FROM events WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+        cycles = cycle_row["max_cycle"] if cycle_row and cycle_row["max_cycle"] else 0
+
+        # Consecutive failures
+        last_success = conn.execute(
+            "SELECT timestamp FROM events "
+            "WHERE agent_id = ? AND event_type = 'cycle_complete' "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+        if last_success:
+            fail_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM failed_cycles "
+                "WHERE agent_id = ? AND timestamp > ?",
+                (agent_id, last_success["timestamp"]),
+            ).fetchone()
+            consec_failures = fail_row["cnt"] if fail_row else 0
+        else:
+            fail_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM failed_cycles WHERE agent_id = ?",
+                (agent_id,),
+            ).fetchone()
+            consec_failures = fail_row["cnt"] if fail_row else 0
+
+        # Cadence
+        cadence = acfg.get("cadence_hours", 4)
+        wake_row = conn.execute(
+            "SELECT payload FROM events "
+            "WHERE agent_id = ? AND event_type = 'wake_schedule_update' "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+        if wake_row:
+            try:
+                cadence = json.loads(wake_row["payload"]).get("base_cadence_hours", cadence)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Last cycle notes (truncated)
+        notes_row = conn.execute(
+            "SELECT payload FROM events "
+            "WHERE agent_id = ? AND event_type = 'cycle_notes' "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+        last_notes = ""
+        if notes_row:
+            try:
+                data = json.loads(notes_row["payload"])
+                if isinstance(data, dict):
+                    last_notes = data.get("notes", "")
+                    if isinstance(last_notes, dict):
+                        last_notes = last_notes.get("cycle_notes", str(last_notes))
+                    elif not last_notes:
+                        last_notes = data.get("cycle_notes", str(data))
+                else:
+                    last_notes = str(data)
+            except (json.JSONDecodeError, TypeError):
+                last_notes = str(notes_row["payload"])
+
+        summaries.append({
+            "agent_id": agent_id,
+            "status": status,
+            "cycles": cycles,
+            "capital": acfg.get("capital_allocated", 0.0),
+            "cadence": cadence,
+            "consec_failures": consec_failures,
+            "last_notes": last_notes,
+        })
+    return summaries
+
+
+def _get_sirs(conn) -> list[dict]:
+    """Get system improvement requests."""
+    rows = conn.execute(
+        "SELECT request_id, created_at, agent_id, cycle, title, problem, "
+        "impact, category, priority, status, status_note "
+        "FROM system_improvement_requests ORDER BY id DESC LIMIT 30"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _get_owner_requests(conn) -> list[dict]:
+    """Get owner requests from agents."""
+    rows = conn.execute(
+        "SELECT request_id, created_at, agent_id, cycle, type, urgency, "
+        "title, description, blocked_work, status, resolution_note "
+        "FROM owner_requests ORDER BY id DESC LIMIT 20"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --------------------------------------------------------------------------
 # HTML builder
 # --------------------------------------------------------------------------
@@ -161,21 +369,24 @@ def _get_system_state(conn) -> dict:
 def _build_html(
     equity_data: list[dict],
     strategies: list[dict],
+    research_notes: list[dict],
+    backtest_results: list[dict],
+    graveyard: list[dict],
+    failed_cycles: list[dict],
+    funnel: dict[str, int],
     risk_log: list[dict],
     messages: list[dict],
     feeds: list[dict],
     trades: list[dict],
     system_state: dict,
+    agent_summaries: list[dict],
+    sirs: list[dict],
+    owner_requests: list[dict],
     config: dict,
     generated_at: str,
 ) -> str:
     """Assemble the full HTML dashboard."""
 
-    # --- Equity chart as inline SVG ---
-    equity_svg = _build_equity_svg(equity_data)
-
-    # --- Strategy table ---
-    strategy_rows = ""
     stage_colors = {
         "hypothesis": "#888",
         "backtest": "#d4a017",
@@ -184,6 +395,135 @@ def _build_html(
         "live": "#4CAF50",
         "graveyard": "#f44336",
     }
+
+    # --- Equity chart as inline SVG ---
+    equity_svg = _build_equity_svg(equity_data)
+
+    # --- Strategy funnel ---
+    funnel_html = _build_funnel_html(funnel, stage_colors)
+
+    # --- Research notes table ---
+    note_status_colors = {
+        "research": "#4fc3f7",
+        "active": "#4CAF50",
+        "promoted": "#d4a017",
+        "abandoned": "#f44336",
+        "expired": "#888",
+    }
+    research_rows = ""
+    active_notes_count = 0
+    for n in research_notes:
+        status = n.get("status", "")
+        if status not in ("promoted", "abandoned", "expired"):
+            active_notes_count += 1
+        scolor = note_status_colors.get(status, "#888")
+        obs = escape(str(n.get("observation", ""))[:120])
+        edge = escape(str(n.get("potential_edge", ""))[:80])
+        research_rows += (
+            f"<tr>"
+            f"<td>{escape(str(n.get('note_id', '')))}</td>"
+            f"<td>{escape(str(n.get('agent_id', '')))}</td>"
+            f"<td style='color:{scolor};font-weight:bold'>{escape(status)}</td>"
+            f"<td>{n.get('age_cycles', 0)}c</td>"
+            f"<td>{obs}</td>"
+            f"<td>{edge}</td>"
+            f"</tr>\n"
+        )
+
+    # --- Backtest & robustness results table ---
+    bt_rows = ""
+    for b in backtest_results:
+        bt = b.get("backtest_results") or {}
+        rob = b.get("robustness_results") or {}
+
+        total_ret = bt.get("total_return")
+        sharpe = bt.get("sharpe_ratio")
+        max_dd = bt.get("max_drawdown")
+        win_rate = bt.get("win_rate")
+        trade_count = bt.get("trade_count", 0)
+        bench_ret = bt.get("benchmark_return")
+
+        rob_sharpe_pct = rob.get("sharpe_percentile") if isinstance(rob, dict) else None
+        rob_return_pct = rob.get("total_return_percentile") if isinstance(rob, dict) else None
+
+        def _fmt(v, pct=False, color_thresh=None):
+            if v is None:
+                return "<td style='color:#555'>-</td>"
+            if pct:
+                val_str = f"{v:.1f}%"
+            elif isinstance(v, float):
+                val_str = f"{v:.3f}"
+            else:
+                val_str = str(v)
+            color = ""
+            if color_thresh is not None and isinstance(v, (int, float)):
+                color = " style='color:#4CAF50'" if v >= color_thresh else " style='color:#f44336'"
+            return f"<td{color}>{val_str}</td>"
+
+        stage = b.get("stage", "")
+        scolor = stage_colors.get(stage, "#888")
+
+        bt_rows += (
+            f"<tr>"
+            f"<td>{escape(str(b.get('strategy_id', '')))}</td>"
+            f"<td style='color:{scolor};font-weight:bold'>{escape(stage)}</td>"
+            f"{_fmt(total_ret, pct=True, color_thresh=0)}"
+            f"{_fmt(sharpe, color_thresh=0.5)}"
+            f"{_fmt(max_dd, pct=True)}"
+            f"{_fmt(win_rate, pct=True, color_thresh=50)}"
+            f"<td>{trade_count}</td>"
+            f"{_fmt(bench_ret, pct=True)}"
+            f"{_fmt(rob_sharpe_pct, pct=True, color_thresh=90)}"
+            f"{_fmt(rob_return_pct, pct=True, color_thresh=90)}"
+            f"</tr>\n"
+        )
+
+    # --- Graveyard table ---
+    graveyard_rows = ""
+    kill_reasons: dict[str, int] = {}
+    for g in graveyard:
+        reason = g.get("kill_reason", "unknown")
+        kill_reasons[reason] = kill_reasons.get(reason, 0) + 1
+        created = str(g.get("created_at", ""))[:10]
+        killed = str(g.get("updated_at", ""))[:10]
+        graveyard_rows += (
+            f"<tr>"
+            f"<td>{escape(str(g.get('strategy_id', '')))}</td>"
+            f"<td>{escape(str(g.get('agent_id', '')))}</td>"
+            f"<td>{escape(str(g.get('killed_from_stage', '')))}</td>"
+            f"<td>{escape(reason[:60])}</td>"
+            f"<td>{created}</td>"
+            f"<td>{killed}</td>"
+            f"</tr>\n"
+        )
+
+    kill_reason_summary = ""
+    if kill_reasons:
+        items = sorted(kill_reasons.items(), key=lambda x: -x[1])
+        pills = " ".join(
+            f"<span style='background:#2a1a3e;padding:4px 10px;border-radius:12px;"
+            f"font-size:0.85em;margin-right:4px;'>{escape(k[:40])} "
+            f"<b style=\"color:#f44336\">{v}</b></span>"
+            for k, v in items
+        )
+        kill_reason_summary = f"<div style='margin-bottom:12px;'>{pills}</div>"
+
+    # --- Failed cycles table ---
+    fail_rows = ""
+    for fc in failed_cycles:
+        err = escape(str(fc.get("error", ""))[:100])
+        fail_rows += (
+            f"<tr>"
+            f"<td>{escape(str(fc.get('timestamp', ''))[:16])}</td>"
+            f"<td>{escape(str(fc.get('agent_id', '')))}</td>"
+            f"<td>{fc.get('cycle', '')}</td>"
+            f"<td>{escape(str(fc.get('model_used', '')))}</td>"
+            f"<td style='color:#f44336'>{err}</td>"
+            f"</tr>\n"
+        )
+
+    # --- Strategy table ---
+    strategy_rows = ""
     for s in strategies:
         color = stage_colors.get(s.get("stage", ""), "#888")
         strategy_rows += (
@@ -273,24 +613,104 @@ def _build_html(
     hwm = system_state.get("high_water_mark", {})
     hwm_val = hwm.get("amount", 0.0) if isinstance(hwm, dict) else 0.0
 
+    # --- Computed stats ---
+    backtest_count = funnel.get("backtest", 0) + funnel.get("robustness", 0)
+
+    # --- Agent summary cards ---
+    agent_summary_html = ""
+    for a in agent_summaries:
+        status_color = "#4CAF50" if a["status"] == "active" else "#f44336"
+        fail_color = "#f44336" if a["consec_failures"] >= 3 else ("#d4a017" if a["consec_failures"] >= 1 else "#4CAF50")
+        notes_preview = escape(str(a["last_notes"])[:500]) if a["last_notes"] else "<em>No cycle notes</em>"
+        agent_summary_html += (
+            f"<div style='background:#16213e;border-radius:8px;padding:16px;margin-bottom:12px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'>"
+            f"<h3 style='color:#81d4fa;margin:0;'>{escape(a['agent_id'])}</h3>"
+            f"<span style='color:{status_color};font-weight:bold;text-transform:uppercase;'>{escape(a['status'])}</span>"
+            f"</div>"
+            f"<div style='display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px;font-size:0.9em;'>"
+            f"<div><span style='color:#888;'>Cycles:</span> <b>{a['cycles']}</b></div>"
+            f"<div><span style='color:#888;'>Capital:</span> <b>${a['capital']:,.2f}</b></div>"
+            f"<div><span style='color:#888;'>Cadence:</span> <b>{a['cadence']}h</b></div>"
+            f"<div><span style='color:#888;'>Consec. Failures:</span> <b style='color:{fail_color}'>{a['consec_failures']}</b></div>"
+            f"</div>"
+            f"<details><summary style='color:#888;cursor:pointer;font-size:0.85em;'>Last Cycle Notes</summary>"
+            f"<div style='margin-top:8px;padding:10px;background:#1a1a2e;border-radius:4px;"
+            f"font-size:0.85em;line-height:1.5;white-space:pre-wrap;max-height:300px;overflow-y:auto;'>"
+            f"{notes_preview}</div></details>"
+            f"</div>\n"
+        )
+
+    # --- SIR table ---
+    sir_status_colors = {
+        "pending": "#d4a017",
+        "shipped": "#4CAF50",
+        "declined": "#f44336",
+        "acknowledged": "#2196F3",
+    }
+    sir_rows = ""
+    pending_sir_count = sum(1 for s in sirs if s.get("status") == "pending")
+    for s in sirs:
+        status = s.get("status", "pending")
+        scolor = sir_status_colors.get(status, "#888")
+        sir_rows += (
+            f"<tr>"
+            f"<td>{escape(str(s.get('request_id', '')))}</td>"
+            f"<td>{escape(str(s.get('created_at', ''))[:10])}</td>"
+            f"<td>{escape(s.get('agent_id', ''))}</td>"
+            f"<td>{escape(s.get('category', ''))}</td>"
+            f"<td>{escape(s.get('priority', ''))}</td>"
+            f"<td style='color:{scolor};font-weight:bold'>{escape(status)}</td>"
+            f"<td>{escape(str(s.get('title', ''))[:80])}</td>"
+            f"<td>{escape(str(s.get('problem', ''))[:100])}</td>"
+            f"</tr>\n"
+        )
+
+    # --- Owner requests table ---
+    or_status_colors = {
+        "pending": "#d4a017",
+        "resolved": "#4CAF50",
+        "declined": "#f44336",
+    }
+    or_rows = ""
+    pending_or_count = sum(1 for o in owner_requests if o.get("status") == "pending")
+    for o in owner_requests:
+        status = o.get("status", "pending")
+        ocolor = or_status_colors.get(status, "#888")
+        urgency = o.get("urgency", "normal")
+        urgency_color = "#f44336" if urgency == "critical" else ("#d4a017" if urgency == "high" else "#888")
+        or_rows += (
+            f"<tr>"
+            f"<td>{escape(str(o.get('request_id', '')))}</td>"
+            f"<td>{escape(str(o.get('created_at', ''))[:10])}</td>"
+            f"<td>{escape(o.get('agent_id', ''))}</td>"
+            f"<td>{escape(o.get('type', ''))}</td>"
+            f"<td style='color:{urgency_color};font-weight:bold'>{escape(urgency)}</td>"
+            f"<td style='color:{ocolor};font-weight:bold'>{escape(status)}</td>"
+            f"<td>{escape(str(o.get('title', ''))[:80])}</td>"
+            f"<td>{escape(str(o.get('description', ''))[:100])}</td>"
+            f"</tr>\n"
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="60">
 <title>Agentic Quant System Dashboard</title>
 <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
     body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: #1a1a2e; color: #e0e0e0; padding: 20px; }}
+           background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 1400px; margin: 0 auto; }}
     h1 {{ color: #4fc3f7; margin-bottom: 5px; }}
     h2 {{ color: #81d4fa; margin: 25px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; }}
     .meta {{ color: #888; font-size: 0.85em; margin-bottom: 20px; }}
-    .status-bar {{ display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; }}
-    .status-card {{ background: #16213e; padding: 15px 20px; border-radius: 8px;
-                   min-width: 150px; }}
-    .status-card .label {{ color: #888; font-size: 0.8em; text-transform: uppercase; }}
-    .status-card .value {{ font-size: 1.4em; font-weight: bold; margin-top: 3px; }}
+    .status-bar {{ display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px; }}
+    .status-card {{ background: #16213e; padding: 12px 18px; border-radius: 8px;
+                   min-width: 130px; flex: 1; }}
+    .status-card .label {{ color: #888; font-size: 0.75em; text-transform: uppercase; }}
+    .status-card .value {{ font-size: 1.3em; font-weight: bold; margin-top: 3px; }}
     .status-card .value.ok {{ color: #4CAF50; }}
     .status-card .value.warn {{ color: #f44336; }}
     table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px;
@@ -303,11 +723,18 @@ def _build_html(
     .rejected {{ color: #f44336; font-weight: bold; }}
     .svg-chart {{ background: #16213e; border-radius: 8px; padding: 15px; margin-bottom: 20px; }}
     .section {{ margin-bottom: 30px; }}
+    .funnel {{ display: flex; gap: 8px; align-items: flex-end; padding: 20px 0; }}
+    .funnel-stage {{ text-align: center; flex: 1; }}
+    .funnel-bar {{ border-radius: 4px 4px 0 0; min-height: 8px; margin: 0 auto;
+                  width: 80%; transition: height 0.3s; }}
+    .funnel-count {{ font-size: 1.4em; font-weight: bold; margin-top: 6px; }}
+    .funnel-label {{ font-size: 0.75em; color: #888; text-transform: uppercase; margin-top: 2px; }}
+    .funnel-arrow {{ color: #555; font-size: 1.2em; align-self: center; padding-bottom: 30px; }}
 </style>
 </head>
 <body>
 <h1>Agentic Quant System</h1>
-<div class="meta">Generated: {generated_at}</div>
+<div class="meta">Generated: {generated_at} &mdash; auto-refreshes every 60s</div>
 
 <div class="status-bar">
     <div class="status-card">
@@ -323,9 +750,39 @@ def _build_html(
         <div class="value">{len(strategies)}</div>
     </div>
     <div class="status-card">
+        <div class="label">Research Notes</div>
+        <div class="value">{active_notes_count}</div>
+    </div>
+    <div class="status-card">
+        <div class="label">In Backtest</div>
+        <div class="value">{backtest_count}</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Failed Cycles</div>
+        <div class="value{' warn' if len(failed_cycles) > 5 else ''}">{len(failed_cycles)}</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Pending SIRs</div>
+        <div class="value{' warn' if pending_sir_count > 0 else ''}">{pending_sir_count}</div>
+    </div>
+    <div class="status-card">
+        <div class="label">Owner Requests</div>
+        <div class="value{' warn' if pending_or_count > 0 else ''}">{pending_or_count}</div>
+    </div>
+    <div class="status-card">
         <div class="label">Recent Trades</div>
         <div class="value">{len(trades)}</div>
     </div>
+</div>
+
+<div class="section">
+<h2>Agent State Summary</h2>
+{agent_summary_html if agent_summary_html else "<p style='color:#888'>No enabled agents</p>"}
+</div>
+
+<div class="section">
+<h2>Strategy Lifecycle Funnel</h2>
+{funnel_html}
 </div>
 
 <div class="section">
@@ -333,6 +790,31 @@ def _build_html(
 <div class="svg-chart">
 {equity_svg}
 </div>
+</div>
+
+<div class="section">
+<h2>Research Notes ({len(research_notes)} total, {active_notes_count} active)</h2>
+<table>
+<tr><th>Note ID</th><th>Agent</th><th>Status</th><th>Age</th><th>Observation</th><th>Potential Edge</th></tr>
+{research_rows if research_rows else "<tr><td colspan='6'>No research notes</td></tr>"}
+</table>
+</div>
+
+<div class="section">
+<h2>Backtest &amp; Robustness Results</h2>
+<table>
+<tr><th>Strategy</th><th>Stage</th><th>Return</th><th>Sharpe</th><th>Max DD</th><th>Win Rate</th><th>Trades</th><th>Benchmark</th><th>Rob. Sharpe %ile</th><th>Rob. Return %ile</th></tr>
+{bt_rows if bt_rows else "<tr><td colspan='10'>No backtest results yet</td></tr>"}
+</table>
+</div>
+
+<div class="section">
+<h2>Graveyard ({len(graveyard)} strategies)</h2>
+{kill_reason_summary}
+<table>
+<tr><th>Strategy</th><th>Agent</th><th>Killed From</th><th>Kill Reason</th><th>Created</th><th>Killed</th></tr>
+{graveyard_rows if graveyard_rows else "<tr><td colspan='6'>No graveyard entries</td></tr>"}
+</table>
 </div>
 
 <div class="section">
@@ -344,10 +826,18 @@ def _build_html(
 </div>
 
 <div class="section">
-<h2>Strategy Lifecycle</h2>
+<h2>Strategy Registry</h2>
 <table>
 <tr><th>Strategy</th><th>Agent</th><th>Namespace</th><th>Stage</th><th>Created</th><th>Updated</th></tr>
 {strategy_rows if strategy_rows else "<tr><td colspan='6'>No strategies registered</td></tr>"}
+</table>
+</div>
+
+<div class="section">
+<h2>Failed Cycles (last 20)</h2>
+<table>
+<tr><th>Time</th><th>Agent</th><th>Cycle</th><th>Model</th><th>Error</th></tr>
+{fail_rows if fail_rows else "<tr><td colspan='5'>No failed cycles</td></tr>"}
 </table>
 </div>
 
@@ -364,6 +854,22 @@ def _build_html(
 <table>
 <tr><th>Time</th><th>From</th><th>To</th><th>Type</th><th>Priority</th><th>Status</th></tr>
 {msg_rows if msg_rows else "<tr><td colspan='6'>No messages</td></tr>"}
+</table>
+</div>
+
+<div class="section">
+<h2>System Improvement Requests ({len(sirs)} total, {pending_sir_count} pending)</h2>
+<table>
+<tr><th>ID</th><th>Date</th><th>Agent</th><th>Category</th><th>Priority</th><th>Status</th><th>Title</th><th>Problem</th></tr>
+{sir_rows if sir_rows else "<tr><td colspan='8'>No improvement requests</td></tr>"}
+</table>
+</div>
+
+<div class="section">
+<h2>Owner Requests ({len(owner_requests)} total, {pending_or_count} pending)</h2>
+<table>
+<tr><th>ID</th><th>Date</th><th>Agent</th><th>Type</th><th>Urgency</th><th>Status</th><th>Title</th><th>Description</th></tr>
+{or_rows if or_rows else "<tr><td colspan='8'>No owner requests</td></tr>"}
 </table>
 </div>
 
@@ -425,3 +931,42 @@ def _build_equity_svg(equity_data: list[dict]) -> str:
 <line x1="{margin}" y1="{margin}" x2="{margin}" y2="{height - margin}" stroke="#555" stroke-width="1"/>
 <line x1="{margin}" y1="{height - margin}" x2="{width - margin}" y2="{height - margin}" stroke="#555" stroke-width="1"/>
 </svg>"""
+
+
+def _build_funnel_html(funnel: dict[str, int], stage_colors: dict[str, str]) -> str:
+    """Build a visual funnel showing strategy counts per lifecycle stage."""
+    stages = ["hypothesis", "backtest", "robustness", "paper", "live"]
+    max_count = max((funnel.get(s, 0) for s in stages), default=1) or 1
+
+    html = '<div class="funnel">\n'
+    for i, stage in enumerate(stages):
+        count = funnel.get(stage, 0)
+        bar_height = max(8, int(count / max_count * 120))
+        color = stage_colors.get(stage, "#888")
+
+        if i > 0:
+            html += '  <div class="funnel-arrow">&rarr;</div>\n'
+
+        html += (
+            f'  <div class="funnel-stage">\n'
+            f'    <div class="funnel-bar" style="height:{bar_height}px;background:{color}"></div>\n'
+            f'    <div class="funnel-count" style="color:{color}">{count}</div>\n'
+            f'    <div class="funnel-label">{stage}</div>\n'
+            f'  </div>\n'
+        )
+
+    # Add graveyard separately
+    gy_count = funnel.get("graveyard", 0)
+    gy_height = max(8, int(gy_count / max_count * 120)) if max_count > 0 else 8
+    html += (
+        '  <div style="margin-left:20px;border-left:2px solid #333;padding-left:20px;">\n'
+        '  <div class="funnel-stage">\n'
+        f'    <div class="funnel-bar" style="height:{gy_height}px;background:#f44336"></div>\n'
+        f'    <div class="funnel-count" style="color:#f44336">{gy_count}</div>\n'
+        f'    <div class="funnel-label">graveyard</div>\n'
+        '  </div>\n'
+        '  </div>\n'
+    )
+
+    html += '</div>\n'
+    return html

@@ -575,6 +575,29 @@ def main():
     wake_controller.start()
     logger.info("Wake controller started")
 
+    # --- 8b. Start dashboard web server ---
+    dash_cfg = config.get("dashboard", {})
+    if dash_cfg.get("enabled", True):
+        from dashboard.server import start_server as _start_dash_server
+
+        dash_host = dash_cfg.get("host", "0.0.0.0")
+        dash_port = dash_cfg.get("port", 8501)
+        dash_output = config.get("system", {}).get("dashboard_output", "dashboard/output")
+
+        dash_thread = threading.Thread(
+            target=_start_dash_server,
+            kwargs={
+                "host": dash_host,
+                "port": dash_port,
+                "dashboard_path": dash_output,
+                "db_path": db_path,
+            },
+            name="DashboardServer",
+            daemon=True,
+        )
+        dash_thread.start()
+        logger.info("Dashboard server started on %s:%d", dash_host, dash_port)
+
     # --- 9. Block until shutdown requested ---
     try:
         while not shutdown_requested:
