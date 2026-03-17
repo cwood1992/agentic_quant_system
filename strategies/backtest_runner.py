@@ -87,11 +87,36 @@ class BacktestRunner:
         # Run simulation
         starting_capital = hypothesis_config.get("starting_capital", 10000.0)
         trades, equity_curve = self._simulate(
-            strategy, candles, pair, starting_capital, feeds=feeds
+            strategy, candles, pair, timeframe, starting_capital, feeds=feeds
         )
 
         trade_count = len(trades)
         if trade_count < MINIMUM_TRADE_COUNT:
+            # Build diagnostic info for debugging 0-trade failures
+            diagnostic = {
+                "candle_count": len(candles),
+                "data_keys_available": [
+                    "candle", "pair", "timeframe", "index",
+                    "candles_so_far", f"{pair}:{timeframe}", pair,
+                ] + list(feeds.keys()) if feeds else [],
+            }
+            # Probe first candle for errors
+            if candles:
+                probe_data = {
+                    "candle": candles[0],
+                    "pair": pair,
+                    "timeframe": timeframe,
+                    "index": 0,
+                    "candles_so_far": candles[:1],
+                    f"{pair}:{timeframe}": candles[:1],
+                    pair: candles[:1],
+                }
+                try:
+                    strategy.on_data(probe_data)
+                    diagnostic["first_candle_error"] = None
+                except Exception as exc:
+                    diagnostic["first_candle_error"] = str(exc)
+
             return {
                 "success": False,
                 "failure_reason": (
@@ -100,6 +125,7 @@ class BacktestRunner:
                 "trade_count": trade_count,
                 "trades": trades,
                 "equity_curve": equity_curve.tolist(),
+                "diagnostic": diagnostic,
             }
 
         # Compute metrics
@@ -199,6 +225,7 @@ class BacktestRunner:
         strategy: BaseStrategy,
         candles: list[dict],
         pair: str,
+        timeframe: str,
         starting_capital: float,
         feeds: dict[str, list[dict]] | None = None,
     ) -> tuple[list[dict], np.ndarray]:
@@ -208,6 +235,7 @@ class BacktestRunner:
             strategy: Instantiated strategy.
             candles: Chronological candle data.
             pair: Trading pair.
+            timeframe: Candle timeframe (e.g. "4h").
             starting_capital: Initial capital in USD.
             feeds: Optional supplementary feed data keyed by feed name.
 
@@ -222,13 +250,22 @@ class BacktestRunner:
         equity_values = [starting_capital]
         feeds = feeds or {}
 
+        # Build feed key once: "BTC/USD:4h"
+        feed_key = f"{pair}:{timeframe}" if timeframe else pair
+        first_error_logged = False
+
         for i, candle in enumerate(candles):
             # Build data dict for strategy
+            history = candles[: i + 1]
             data = {
                 "candle": candle,
                 "pair": pair,
+                "timeframe": timeframe,
                 "index": i,
-                "candles_so_far": candles[: i + 1],
+                "candles_so_far": history,
+                # Feed-keyed entries so strategies can use data["BTC/USD:4h"]
+                feed_key: history,
+                pair: history,
             }
 
             # Attach supplementary feeds — latest value at or before candle timestamp
@@ -243,7 +280,15 @@ class BacktestRunner:
                 if latest_val is not None:
                     data[feed_name] = latest_val
 
-            signals = strategy.on_data(data)
+            try:
+                signals = strategy.on_data(data)
+            except Exception as exc:
+                if not first_error_logged:
+                    logger.warning(
+                        "on_data() error at candle %d for %s: %s", i, pair, exc
+                    )
+                    first_error_logged = True
+                signals = []
 
             for signal in signals:
                 if not isinstance(signal, Signal):

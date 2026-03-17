@@ -288,6 +288,14 @@ class DigestBuilder:
 
             sections = []
 
+            # Pipeline summary line for instant visibility
+            pipeline_summary = (
+                f"STRATEGY PIPELINE: {len(live)} live | {len(paper)} paper | "
+                f"{len(backtest)} backtest/robustness | {len(hypothesis)} hypothesis | "
+                f"{len(graveyard)} graveyard"
+            )
+            sections.append(pipeline_summary)
+
             # Live strategies
             live_lines = []
             for s in live:
@@ -301,7 +309,7 @@ class DigestBuilder:
                 )
             sections.append(self._collapse_if_empty("LIVE STRATEGIES", "\n".join(live_lines)))
 
-            # Paper strategies
+            # Paper strategies (sir_034: signal log, sir_035: position state)
             paper_lines = []
             for s in paper:
                 paper_res = json.loads(s["paper_results"]) if s["paper_results"] else {}
@@ -312,6 +320,87 @@ class DigestBuilder:
                     f"results: {json.dumps(paper_res, separators=(',', ':'))}"
                     f"{state_str}"
                 )
+
+                # sir_035: Current open positions for this strategy
+                try:
+                    pos_rows = conn.execute(
+                        """
+                        SELECT t.pair, t.action, t.fill_price AS entry_price,
+                               t.size_usd, t.timestamp AS entry_time
+                        FROM trades t
+                        WHERE t.agent_id = ?
+                          AND t.strategy_id = ?
+                          AND t.paper = 1
+                          AND t.action = 'buy'
+                          AND t.status = 'filled'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trades c
+                              WHERE c.agent_id = t.agent_id
+                                AND c.pair = t.pair
+                                AND c.strategy_id = t.strategy_id
+                                AND c.action IN ('sell', 'close')
+                                AND c.status = 'filled'
+                                AND c.paper = 1
+                                AND c.timestamp > t.timestamp
+                          )
+                        ORDER BY t.timestamp
+                        """,
+                        (self.agent_id, s["strategy_id"]),
+                    ).fetchall()
+
+                    if pos_rows:
+                        for pos in pos_rows:
+                            cur_price_row = conn.execute(
+                                "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                                "ORDER BY timestamp DESC LIMIT 1",
+                                (pos["pair"],),
+                            ).fetchone()
+                            cur_price = cur_price_row["close"] if cur_price_row else None
+                            if cur_price and pos["entry_price"]:
+                                upnl = ((cur_price - pos["entry_price"]) / pos["entry_price"]) * pos["size_usd"]
+                                paper_lines.append(
+                                    f"    Position: {pos['action'].upper()} {pos['pair']} "
+                                    f"${pos['size_usd']:.2f} entry=${pos['entry_price']:.2f} "
+                                    f"now=${cur_price:.2f} uPnL=${upnl:+.2f}"
+                                )
+                            else:
+                                paper_lines.append(
+                                    f"    Position: {pos['action'].upper()} {pos['pair']} "
+                                    f"${pos['size_usd']:.2f} entry=${pos['entry_price']:.2f}"
+                                )
+                    else:
+                        paper_lines.append("    Positions: FLAT")
+                except Exception as exc:
+                    self.logger.debug("Error loading positions for %s: %s", s["strategy_id"], exc)
+
+                # sir_034: Recent signals (last 5 trades)
+                try:
+                    signal_rows = conn.execute(
+                        """
+                        SELECT timestamp, pair, action, fill_price, size_usd, rationale
+                        FROM trades
+                        WHERE strategy_id = ? AND paper = 1 AND status = 'filled'
+                        ORDER BY timestamp DESC LIMIT 5
+                        """,
+                        (s["strategy_id"],),
+                    ).fetchall()
+
+                    if signal_rows:
+                        paper_lines.append("    Recent signals:")
+                        for sig in signal_rows:
+                            ts_short = sig["timestamp"][:16] if sig["timestamp"] else "?"
+                            rationale = sig["rationale"] or ""
+                            if len(rationale) > 80:
+                                rationale = rationale[:77] + "..."
+                            paper_lines.append(
+                                f"      [{ts_short}] {sig['action']} {sig['pair']} "
+                                f"@ ${sig['fill_price']:.2f} | {rationale}"
+                            )
+                    else:
+                        paper_lines.append("    Recent signals: none yet")
+                except Exception as exc:
+                    self.logger.debug("Error loading signals for %s: %s", s["strategy_id"], exc)
+
             sections.append(self._collapse_if_empty("PAPER STRATEGIES", "\n".join(paper_lines)))
 
             # Split backtest/robustness into action-oriented sections
@@ -430,14 +519,28 @@ class DigestBuilder:
                 capital_fix_ts = cap_row["ts"]
 
             grave_lines = []
-            for s in graveyard:
+            # Show most recent 5 graveyard entries to keep digest concise
+            recent_graveyard = sorted(
+                graveyard, key=lambda s: s["updated_at"] or "", reverse=True
+            )[:5]
+            if len(graveyard) > 5:
+                grave_lines.append(f"  ({len(graveyard)} total — showing last 5)")
+            for s in recent_graveyard:
                 config_data = json.loads(s["config"]) if s["config"] else {}
-                reason = config_data.get("kill_reason", "unknown")
+                reason = config_data.get("kill_reason", "")
+                # Also check backtest_results for failure reason
+                if not reason and s["backtest_results"]:
+                    try:
+                        bt = json.loads(s["backtest_results"])
+                        reason = bt.get("failure_reason") or bt.get("error", "")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                reason = reason or "unknown"
                 zero_cap_flag = ""
                 if capital_fix_ts and s["updated_at"] < capital_fix_ts:
                     zero_cap_flag = " ** KILLED DURING $0 CAPITAL PERIOD — RE-EVALUATE **"
                 grave_lines.append(
-                    f"  {s['strategy_id']} | killed {s['updated_at']} | reason: {reason}{zero_cap_flag}"
+                    f"  {s['strategy_id']} | killed {s['updated_at'][:10]} | reason: {reason}{zero_cap_flag}"
                 )
             sections.append(self._collapse_if_empty("GRAVEYARD SUMMARY", "\n".join(grave_lines)))
 
@@ -1168,6 +1271,25 @@ class DigestBuilder:
                     f"| mean = {residual_mean:.1f} | std = {residual_std:.1f} "
                     f"| hedge = {hedge_ratio:.4f}"
                 )
+
+                # sir_023: z-score distribution stats
+                try:
+                    zdist = engine.spread_zscore_distribution(
+                        target_pairs, "4h", lookback_days=30
+                    )
+                    if "error" not in zdist:
+                        pcts = zdist["percentiles"]
+                        exc = zdist["exceedance"]
+                        hl = zdist.get("half_life_periods")
+                        hl_str = f"{hl}" if hl else "n/a"
+                        lines.append(
+                            f"    z-dist: p5={pcts['p5']:+.1f} p25={pcts['p25']:+.1f} "
+                            f"p75={pcts['p75']:+.1f} p95={pcts['p95']:+.1f} | "
+                            f">1.0: {exc['pct_above_1.0']}% >1.5: {exc['pct_above_1.5']}% "
+                            f">2.0: {exc['pct_above_2.0']}% | half-life: {hl_str} periods"
+                        )
+                except Exception:
+                    pass  # z-dist is supplementary; don't fail the whole section
             except Exception as exc:
                 self.logger.debug(
                     "Skipping z-score for %s: %s", row["strategy_id"], exc

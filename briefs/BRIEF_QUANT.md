@@ -229,7 +229,7 @@ BaseStrategy interface (`strategies/base.py`):
 ```
 name() -> str                        # unique identifier matching hypothesis_id
 required_feeds() -> list[str]        # e.g. ["BTC/USD:4h", "ETH/USD:4h"]
-on_data(data: dict) -> list[Signal]  # data keys: candle, pair, index, candles_so_far
+on_data(data: dict) -> list[Signal]  # data keys: candle, pair, timeframe, index, candles_so_far, "PAIR:TF", "PAIR", plus supplementary feeds
 
 Signal(action, pair, size_pct, order_type="market", limit_price=None, rationale="")
   action: "buy" | "sell" | "close" | "hold"
@@ -284,8 +284,10 @@ class BaseStrategy(ABC):
     def required_feeds(self) -> list[str]:
         """Data feeds this strategy needs."""
     @abstractmethod
-    def on_data(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
-        """Called on new data. Returns Signals (empty = hold)."""
+    def on_data(self, data: dict) -> list[Signal]:
+        """Called on new data. data keys: candle (dict), pair (str), timeframe (str),
+        index (int), candles_so_far (list[dict]), 'PAIR:TF' (list[dict]),
+        'PAIR' (list[dict]), plus supplementary feed names. Returns Signals (empty = hold)."""
     def on_fill(self, fill: dict) -> None:
         """Optional. Called when order filled."""
     def on_cycle(self, cycle_number: int, portfolio_state: dict) -> dict:

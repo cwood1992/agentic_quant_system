@@ -296,6 +296,24 @@ class WakeController:
                 except Exception:
                     logger.exception("Error checking wake request trigger for %s", agent_id)
 
+            # sir_020: Fear & Greed reversal trigger
+            if not should_fire:
+                try:
+                    if BuiltInTriggers.check_fear_greed_reversal(self.db_path):
+                        should_fire = True
+                        trigger_reason = "fear_greed_reversal"
+                except Exception:
+                    logger.exception("Error checking F&G reversal trigger for %s", agent_id)
+
+            # sir_021: Spread z-score crossing trigger
+            if not should_fire:
+                try:
+                    if BuiltInTriggers.check_spread_zscore_cross(self.db_path):
+                        should_fire = True
+                        trigger_reason = "spread_zscore_cross"
+                except Exception:
+                    logger.exception("Error checking z-score trigger for %s", agent_id)
+
             # Agent-defined conditional triggers
             if not should_fire:
                 conditional = schedule.get("conditional_triggers", [])
@@ -491,5 +509,73 @@ class WakeController:
                     conditions["volatility_score"] = sum(scores) / len(scores)
         except Exception:
             logger.debug("Could not compute volatility conditions", exc_info=True)
+
+        # sir_020: Fear & Greed value for conditional triggers
+        try:
+            conn = get_db(self.db_path)
+            try:
+                fg_row = conn.execute(
+                    "SELECT value FROM supplementary_feeds "
+                    "WHERE feed_name = 'fear_greed_index' "
+                    "ORDER BY timestamp DESC LIMIT 1",
+                ).fetchone()
+                if fg_row and fg_row["value"] is not None:
+                    conditions["fear_greed_value"] = fg_row["value"]
+            finally:
+                conn.close()
+        except Exception:
+            logger.debug("Could not fetch F&G condition", exc_info=True)
+
+        # sir_021: Max absolute z-score across pair strategies
+        try:
+            import json as _json
+            conn = get_db(self.db_path)
+            try:
+                strat_rows = conn.execute(
+                    "SELECT strategy_id, config FROM strategy_registry "
+                    "WHERE stage NOT IN ('graveyard') AND config IS NOT NULL",
+                ).fetchall()
+            finally:
+                conn.close()
+
+            max_abs_z = 0.0
+            for srow in strat_rows:
+                try:
+                    cfg = _json.loads(srow["config"] or "{}")
+                    tp = cfg.get("target_pairs", [])
+                    if len(tp) != 2:
+                        continue
+                    # Read cached z-score from strategy_state
+                    conn2 = get_db(self.db_path)
+                    try:
+                        cache = conn2.execute(
+                            "SELECT value FROM strategy_state "
+                            "WHERE strategy_id = ? AND key = 'cached_coint_params'",
+                            (srow["strategy_id"],),
+                        ).fetchone()
+                        if not cache:
+                            continue
+                        params = _json.loads(cache["value"])
+                        pa = conn2.execute(
+                            "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                            "ORDER BY timestamp DESC LIMIT 1", (tp[0],),
+                        ).fetchone()
+                        pb = conn2.execute(
+                            "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                            "ORDER BY timestamp DESC LIMIT 1", (tp[1],),
+                        ).fetchone()
+                    finally:
+                        conn2.close()
+                    if pa and pb:
+                        spread = pa["close"] - (params["hedge_ratio"] * pb["close"] + params["intercept"])
+                        z = abs((spread - params["residual_mean"]) / params["residual_std"])
+                        if z > max_abs_z:
+                            max_abs_z = z
+                except Exception:
+                    continue
+            if max_abs_z > 0:
+                conditions["spread_zscore_max"] = round(max_abs_z, 2)
+        except Exception:
+            logger.debug("Could not compute z-score condition", exc_info=True)
 
         return conditions

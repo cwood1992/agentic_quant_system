@@ -249,21 +249,22 @@ def handle_check_backtest_status(params: dict, agent_id: str, db_path: str) -> s
 
     conn = get_db(db_path)
     try:
+        # Search by exact hypothesis_id, exact strategy_id, or prefix match
         row = conn.execute(
             """SELECT strategy_id, stage, config, backtest_results,
                       robustness_results, paper_results, updated_at
                FROM strategy_registry
-               WHERE hypothesis_id = ?
+               WHERE hypothesis_id = ? OR strategy_id = ? OR strategy_id LIKE ?
                ORDER BY updated_at DESC
                LIMIT 1""",
-            (hypothesis_id,),
+            (hypothesis_id, hypothesis_id, f"{hypothesis_id}%"),
         ).fetchone()
 
         if row is None:
             return json.dumps({
                 "hypothesis_id": hypothesis_id,
                 "found": False,
-                "note": "No strategy found for this hypothesis_id.",
+                "note": "No strategy found matching this id in any stage (including graveyard).",
             })
 
         result = {

@@ -447,6 +447,24 @@ def main():
             "WHERE request_id = 'owner_req_001_kraken_margin' AND status = 'pending'",
             (now,),
         )
+        # Resolve blocking owner requests
+        conn.execute(
+            "UPDATE owner_requests SET status = 'resolved', resolved_at = ?, "
+            "resolution_note = 'Root cause: backtest engine data dict used keys "
+            "(candle, pair, candles_so_far) but strategies expected feed-keyed "
+            "format (BTC/USD:4h). Fixed: backtest now provides both formats. "
+            "Also: on_data() exceptions were silently swallowed — now logged.' "
+            "WHERE request_id = 'or_028_backtest_engine_data_keys' AND status = 'pending'",
+            (now,),
+        )
+        conn.execute(
+            "UPDATE owner_requests SET status = 'resolved', resolved_at = ?, "
+            "resolution_note = 'hyp_005 WAS registered and backtested but auto-killed "
+            "(0 trades due to data format mismatch). check_backtest_status now searches "
+            "all stages including graveyard with prefix matching.' "
+            "WHERE request_id = 'or_029_hyp005_not_found' AND status = 'pending'",
+            (now,),
+        )
         # Mark shipped SIRs
         sir_updates = [
             ("sir_003", "Benchmarks now update immediately on startup"),
@@ -460,6 +478,15 @@ def main():
             ("sir_026", "Strategy state persistence (save_strategy_state tool) covers position tracking"),
             ("sir_027", "Hypothesis resubmission detection — duplicates skipped with warning"),
             ("sir_028", "Memory retrieval fixed (JSONL fallback); shutdown flush added"),
+            ("sir_029", "Backtest engine now logs on_data errors and returns diagnostic info (data_keys, first_candle_error) for 0-trade failures"),
+            ("sir_030", "BRIEF updated with correct on_data() data dict format; backtest diagnostic includes data_keys_available"),
+            ("sir_031", "Digest now shows STRATEGY PIPELINE summary line with counts per stage; namespace fix makes all strategies visible"),
+            ("sir_032", "Graveyard entries persist across restarts (confirmed); digest now shows last 5 with kill reasons; namespace fix restored visibility"),
+            ("sir_020", "Fear & Greed reversal wake trigger implemented — fires when F&G increases after 2+ days at extreme fear (<=20)"),
+            ("sir_021", "Spread z-score crossing wake trigger implemented — fires when |z| >= 1.5 for any active pair strategy, with 1h cointegration cache"),
+            ("sir_023", "Z-score distribution stats (p5/p25/p75/p95, threshold exceedance %, half-life) now shown in REQUESTED ANALYSIS digest section"),
+            ("sir_034", "Paper strategy recent signals (last 5 trades with action, price, rationale) now shown in PAPER STRATEGIES digest section"),
+            ("sir_035", "Paper strategy open positions (direction, size, entry/current price, unrealized PnL) now shown in PAPER STRATEGIES digest section"),
         ]
         for sir_id, note in sir_updates:
             conn.execute(

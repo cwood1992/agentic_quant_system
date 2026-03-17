@@ -34,7 +34,7 @@ agents:
     escalation_model: claude-opus-4-6
     base_cadence_hours: 6
     capital_allocation_pct: 1.0
-    strategy_namespace: "primary"
+    strategy_namespace: "quant_primary"
     tools:
       - run_analysis
       - query_memory

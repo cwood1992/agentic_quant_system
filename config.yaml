@@ -15,7 +15,7 @@ claude:
   default_model: claude-sonnet-4-6
   escalation_model: claude-opus-4-6
   max_output_tokens: 16000
-  max_tool_iterations: 10
+  max_tool_iterations: 15
   max_monthly_api_budget_usd: 50
 
 # === Telegram ===
@@ -30,11 +30,11 @@ agents:
     role: quant
     brief: briefs/BRIEF_QUANT.md
     memory: memory/quant_primary.mv2
-    default_model: claude-sonnet-4-6
+    default_model: claude-opus-4-6
     escalation_model: claude-opus-4-6
     base_cadence_hours: 6
     capital_allocation_pct: 1.0
-    strategy_namespace: "primary"
+    strategy_namespace: "quant_primary"
     tools:
       - run_analysis
       - query_memory

@@ -127,6 +127,175 @@ class BuiltInTriggers:
         return oldest_failure_ts > last_success["timestamp"]
 
     @staticmethod
+    def check_fear_greed_reversal(db_path: str) -> bool:
+        """Check if Fear & Greed Index reversed up after >=2 days at extreme fear (<=20).
+
+        Returns True when the most recent F&G value is higher than the previous
+        value, and the previous 2+ consecutive values were <= 20 (extreme fear).
+        This signals a potential sentiment recovery entry. (sir_020)
+        """
+        conn = get_db(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT value, timestamp FROM supplementary_feeds "
+                "WHERE feed_name = 'fear_greed_index' "
+                "ORDER BY timestamp DESC LIMIT 7",
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if len(rows) < 3:
+            return False
+
+        # rows[0] = most recent, rows[1] = previous, etc.
+        current = rows[0]["value"]
+        previous = rows[1]["value"]
+
+        if current is None or previous is None:
+            return False
+
+        # Must be increasing (reversal)
+        if current <= previous:
+            return False
+
+        # Previous 2+ consecutive values must have been <= 20
+        consecutive_extreme = 0
+        for row in rows[1:]:
+            if row["value"] is not None and row["value"] <= 20:
+                consecutive_extreme += 1
+            else:
+                break
+
+        if consecutive_extreme >= 2:
+            logger.info(
+                "F&G reversal detected: current=%.0f, previous=%.0f, "
+                "extreme_fear_days=%d",
+                current, previous, consecutive_extreme,
+            )
+            return True
+
+        return False
+
+    @staticmethod
+    def check_spread_zscore_cross(db_path: str, threshold: float = 1.5) -> bool:
+        """Check if any active pair strategy's spread z-score crosses a threshold.
+
+        Computes the current z-score for all non-graveyard strategies with
+        exactly 2 target_pairs. Returns True if any |z| >= threshold. (sir_021)
+        """
+        import json as _json
+        import numpy as _np
+
+        conn = get_db(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT strategy_id, config FROM strategy_registry "
+                "WHERE stage NOT IN ('graveyard') AND config IS NOT NULL",
+            ).fetchall()
+        finally:
+            conn.close()
+
+        for row in rows:
+            try:
+                config = _json.loads(row["config"] or "{}")
+                target_pairs = config.get("target_pairs", [])
+                if len(target_pairs) != 2:
+                    continue
+
+                # Check cache in strategy_state first
+                conn2 = get_db(db_path)
+                try:
+                    cache_row = conn2.execute(
+                        "SELECT value, updated_at FROM strategy_state "
+                        "WHERE strategy_id = ? AND key = 'cached_coint_params'",
+                        (row["strategy_id"],),
+                    ).fetchone()
+
+                    use_cache = False
+                    if cache_row:
+                        try:
+                            cached = _json.loads(cache_row["value"])
+                            cache_time = datetime.fromisoformat(cache_row["updated_at"])
+                            age_seconds = (
+                                datetime.now(timezone.utc) - cache_time
+                            ).total_seconds()
+                            if age_seconds < 3600:  # cache valid for 1 hour
+                                use_cache = True
+                        except (ValueError, KeyError):
+                            pass
+
+                    if use_cache:
+                        hedge_ratio = cached["hedge_ratio"]
+                        intercept = cached["intercept"]
+                        residual_mean = cached["residual_mean"]
+                        residual_std = cached["residual_std"]
+                    else:
+                        # Recompute cointegration
+                        from data_collector.analysis import AnalysisEngine
+                        engine = AnalysisEngine(db_path)
+                        result = engine.cointegration(target_pairs, "4h", lookback_days=30)
+                        if "error" in result or result.get("residual_std", 0) < 1e-8:
+                            continue
+
+                        hedge_ratio = result["hedge_ratio"]
+                        intercept = result["intercept"]
+                        residual_mean = result["residual_mean"]
+                        residual_std = result["residual_std"]
+
+                        # Update cache
+                        now_iso = datetime.now(timezone.utc).isoformat()
+                        conn2.execute(
+                            "INSERT OR REPLACE INTO strategy_state "
+                            "(strategy_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
+                            (
+                                row["strategy_id"],
+                                "cached_coint_params",
+                                _json.dumps({
+                                    "hedge_ratio": hedge_ratio,
+                                    "intercept": intercept,
+                                    "residual_mean": residual_mean,
+                                    "residual_std": residual_std,
+                                }),
+                                now_iso,
+                            ),
+                        )
+                        conn2.commit()
+
+                    # Get latest prices
+                    price_a = conn2.execute(
+                        "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                        "ORDER BY timestamp DESC LIMIT 1",
+                        (target_pairs[0],),
+                    ).fetchone()
+                    price_b = conn2.execute(
+                        "SELECT close FROM ohlcv_cache WHERE pair = ? "
+                        "ORDER BY timestamp DESC LIMIT 1",
+                        (target_pairs[1],),
+                    ).fetchone()
+                finally:
+                    conn2.close()
+
+                if not price_a or not price_b:
+                    continue
+
+                spread = price_a["close"] - (hedge_ratio * price_b["close"] + intercept)
+                z_score = (spread - residual_mean) / residual_std
+
+                if abs(z_score) >= threshold:
+                    logger.info(
+                        "Spread z-score trigger: %s z=%.2f (threshold=%.1f)",
+                        row["strategy_id"], z_score, threshold,
+                    )
+                    return True
+
+            except Exception:
+                logger.debug(
+                    "Error checking z-score for %s", row["strategy_id"], exc_info=True
+                )
+
+        return False
+
+    @staticmethod
     def check_agent_wake_requests(agent_id: str, db_path: str) -> bool:
         """Check for unread wake-priority messages addressed to this agent.
 

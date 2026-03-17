@@ -551,6 +551,96 @@ class AnalysisEngine:
         }
 
     # ------------------------------------------------------------------
+    # 9. Spread z-score distribution (sir_023)
+    # ------------------------------------------------------------------
+
+    def spread_zscore_distribution(
+        self, pairs: list[str], timeframe: str, lookback_days: int = 30
+    ) -> dict:
+        """Compute z-score distribution stats for a cointegrated pair spread.
+
+        Returns percentiles, threshold exceedance rates, and half-life so the
+        agent can calibrate entry thresholds without burning a tool call.
+
+        Args:
+            pairs: Exactly two trading pairs.
+            timeframe: OHLCV timeframe.
+            lookback_days: Days of data to use.
+
+        Returns:
+            Dict with percentiles, pct_above thresholds, half_life_periods.
+        """
+        if len(pairs) != 2:
+            return {"error": "Requires exactly 2 pairs"}
+
+        closes_a = self._load_closes(pairs[0], timeframe, lookback_days)
+        closes_b = self._load_closes(pairs[1], timeframe, lookback_days)
+
+        if len(closes_a) < 30 or len(closes_b) < 30:
+            return {"error": "Insufficient data for z-score distribution"}
+
+        min_len = min(len(closes_a), len(closes_b))
+        a = closes_a[-min_len:]
+        b = closes_b[-min_len:]
+
+        # OLS: a = beta * b + alpha + residual
+        X = np.column_stack([b, np.ones(min_len)])
+        result = np.linalg.lstsq(X, a, rcond=None)
+        beta, alpha = result[0]
+
+        residuals = a - (beta * b + alpha)
+        residual_mean = float(np.mean(residuals))
+        residual_std = float(np.std(residuals, ddof=1))
+
+        if residual_std < 1e-8:
+            return {"error": "Residual std near zero"}
+
+        z_scores = (residuals - residual_mean) / residual_std
+
+        # Percentiles
+        pcts = [5, 25, 50, 75, 95]
+        percentiles = {
+            f"p{p}": round(float(np.percentile(z_scores, p)), 2)
+            for p in pcts
+        }
+
+        # Threshold exceedance
+        abs_z = np.abs(z_scores)
+        exceedance = {
+            "pct_above_1.0": round(float(np.mean(abs_z > 1.0) * 100), 1),
+            "pct_above_1.5": round(float(np.mean(abs_z > 1.5) * 100), 1),
+            "pct_above_2.0": round(float(np.mean(abs_z > 2.0) * 100), 1),
+        }
+
+        # Half-life from AR(1) on z-scores
+        if len(z_scores) > 1:
+            z_lag = z_scores[:-1]
+            z_now = z_scores[1:]
+            var_lag = float(np.var(z_lag))
+            if var_lag > 0:
+                lag1_autocorr = float(np.mean(z_lag * z_now)) / var_lag
+                if 0 < lag1_autocorr < 1:
+                    half_life = round(-np.log(2) / np.log(lag1_autocorr), 1)
+                else:
+                    half_life = None
+            else:
+                lag1_autocorr = 0.0
+                half_life = None
+        else:
+            lag1_autocorr = 0.0
+            half_life = None
+
+        return {
+            "pair_a": pairs[0],
+            "pair_b": pairs[1],
+            "n_observations": min_len,
+            "percentiles": percentiles,
+            "exceedance": exceedance,
+            "half_life_periods": half_life,
+            "lag1_autocorrelation": round(lag1_autocorr, 4),
+        }
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
